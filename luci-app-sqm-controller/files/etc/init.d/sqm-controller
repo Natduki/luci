@@ -9,6 +9,97 @@ USE_PROCD=0
 CONFIG="sqm_controller"
 PYTHON="/usr/bin/python3"
 APP="/usr/lib/sqm-controller/main.py"
+CRON_FILE="/etc/crontabs/root"
+CRON_TAG="sqm-controller-policy"
+CRON_MARK="# $CRON_TAG"
+POLICY_CMD="/usr/bin/python3 /usr/lib/sqm-controller/main.py --policy-once"
+
+reload_cron_service() {
+    local svc
+    for svc in cron crond; do
+        if [ -x "/etc/init.d/$svc" ]; then
+            "/etc/init.d/$svc" reload >/dev/null 2>&1 || \
+            "/etc/init.d/$svc" restart >/dev/null 2>&1 || \
+            echo "warn: failed to reload/restart $svc"
+            return 0
+        fi
+    done
+}
+
+remove_policy_cron() {
+    local tmp
+    tmp="${CRON_FILE}.tmp.$$"
+
+    if [ ! -f "$CRON_FILE" ]; then
+        : > "$CRON_FILE" 2>/dev/null || {
+            echo "warn: failed to create $CRON_FILE"
+            return 1
+        }
+    fi
+
+    if ! grep -Fv "$CRON_MARK" "$CRON_FILE" > "$tmp" 2>/dev/null; then
+        : > "$tmp"
+    fi
+
+    if ! mv "$tmp" "$CRON_FILE" 2>/dev/null; then
+        rm -f "$tmp"
+        echo "warn: failed to update $CRON_FILE"
+        return 1
+    fi
+
+    reload_cron_service
+    return 0
+}
+
+sync_policy_cron() {
+    local enabled expr line tmp expr_clean
+
+    enabled="$(uci -q get sqm_controller.policy.enabled 2>/dev/null)"
+    if [ "$enabled" != "1" ]; then
+        remove_policy_cron
+        return $?
+    fi
+
+    expr="$(uci -q get sqm_controller.policy.cron 2>/dev/null)"
+    [ -n "$expr" ] || expr="$(uci -q get sqm_controller.policy.schedule 2>/dev/null)"
+    [ -n "$expr" ] || expr="*/1 * * * *"
+
+    expr_clean="$(printf '%s' "$expr" | tr -d '\r\n')"
+    if [ "$expr" != "$expr_clean" ]; then
+        echo "warn: invalid policy cron expression (contains newline)"
+        return 1
+    fi
+    expr="$(printf '%s' "$expr_clean" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ -n "$expr" ] || expr="*/1 * * * *"
+
+    line="$expr $POLICY_CMD $CRON_MARK"
+    tmp="${CRON_FILE}.tmp.$$"
+
+    if [ ! -f "$CRON_FILE" ]; then
+        : > "$CRON_FILE" 2>/dev/null || {
+            echo "warn: failed to create $CRON_FILE"
+            return 1
+        }
+    fi
+
+    if ! grep -Fv "$CRON_MARK" "$CRON_FILE" > "$tmp" 2>/dev/null; then
+        : > "$tmp"
+    fi
+    echo "$line" >> "$tmp" 2>/dev/null || {
+        rm -f "$tmp"
+        echo "warn: failed to append policy cron"
+        return 1
+    }
+
+    if ! mv "$tmp" "$CRON_FILE" 2>/dev/null; then
+        rm -f "$tmp"
+        echo "warn: failed to update $CRON_FILE"
+        return 1
+    fi
+
+    reload_cron_service
+    return 0
+}
 
 start_service() {
     config_load "$CONFIG"
@@ -22,11 +113,17 @@ start_service() {
 
     echo "Starting SQM Controller..."
     $PYTHON $APP --enable
+    local rc=$?
+    sync_policy_cron || echo "warn: failed to sync policy cron"
+    return $rc
 }
 
 stop_service() {
     echo "Stopping SQM Controller..."
     $PYTHON $APP --disable
+    local rc=$?
+    remove_policy_cron || echo "warn: failed to remove policy cron"
+    return $rc
 }
 
 restart() {
