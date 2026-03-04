@@ -1,0 +1,37 @@
+# Default: normalize all text files to LF in repo and checkout as LF
+* text=auto eol=lf
+
+# Common source/config/script files (explicitly enforce LF)
+*.sh text eol=lf
+*.bash text eol=lf
+*.lua text eol=lf
+*.py text eol=lf
+*.htm text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.mk text eol=lf
+*.conf text eol=lf
+*.uci text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+Makefile text eol=lf
+
+# OpenWrt package scripts without extensions
+files/etc/init.d/* text eol=lf
+files/usr/bin/* text eol=lf
+luci-app-sqm-controller/files/etc/init.d/* text eol=lf
+luci-app-sqm-controller/files/usr/bin/* text eol=lf
+
+# Binary assets (never normalize line endings)
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.ico -text
+*.pdf -text
+*.ipk -text
+*.gz -text
+*.xz -text
+*.zip -text

@@ -1,0 +1,11 @@
+# SQM Controller Configuration
+config basic_config 'basic_config'
+    option enabled '0'
+    option interface 'eth0'
+    option download_speed '1000000'
+    option upload_speed '100000'
+    option queue_algorithm 'fq_codel'
+config advanced_config 'advanced_config'
+    option autostart '1'
+    option log_level 'info'
+    option log_file '/var/log/sqm_controller.log'

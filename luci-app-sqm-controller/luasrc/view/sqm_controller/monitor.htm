@@ -1,0 +1,250 @@
+<%+header%>
+
+<style>
+.sqm-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:8px 0 12px; }
+.sqm-card { border:1px solid #e5e5e5; border-radius:8px; padding:12px; margin-bottom:12px; background:#fff; }
+.sqm-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+@media (max-width: 900px){ .sqm-grid{ grid-template-columns:1fr; } }
+.sqm-k { font-size:12px; opacity:.75; }
+.sqm-v { font-size:24px; font-weight:600; }
+.sqm-canvas { width:100%; height:200px; border:1px solid #e5e5e5; border-radius:8px; background:#fafafa; }
+.sqm-pre { max-height:260px; overflow:auto; border:1px solid #e5e5e5; border-radius:8px; background:#fafafa; padding:10px; }
+</style>
+
+<div class="cbi-map">
+  <h2 name="content"><%:SQM流量控制器 - 实时监控%></h2>
+
+  <div class="sqm-toolbar">
+    <button class="cbi-button" id="btn-1m" onclick="setWindow('1m')">1分钟</button>
+    <button class="cbi-button cbi-button-apply" id="btn-5m" onclick="setWindow('5m')">5分钟</button>
+    <button class="cbi-button" id="btn-1h" onclick="setWindow('1h')">1小时</button>
+    <label><input type="checkbox" id="auto" checked onchange="toggleAuto()"> 自动刷新</label>
+    <button class="cbi-button" onclick="exportCsv()">导出CSV</button>
+    <span id="last-update" style="opacity:.75">更新时间: --</span>
+  </div>
+
+  <div class="sqm-grid">
+    <div class="sqm-card"><div class="sqm-k">带宽</div><div id="val-bw" class="sqm-v">-- kbps</div></div>
+    <div class="sqm-card"><div class="sqm-k">延迟</div><div id="val-lat" class="sqm-v">-- ms</div></div>
+    <div class="sqm-card"><div class="sqm-k">丢包</div><div id="val-loss" class="sqm-v">-- %</div></div>
+  </div>
+
+  <div class="sqm-card">
+    <h3>带宽趋势</h3>
+    <canvas id="chart-bw" class="sqm-canvas"></canvas>
+  </div>
+
+  <div class="sqm-card">
+    <h3>延迟趋势</h3>
+    <canvas id="chart-lat" class="sqm-canvas"></canvas>
+  </div>
+
+  <div class="sqm-card">
+    <h3>丢包趋势</h3>
+    <canvas id="chart-loss" class="sqm-canvas"></canvas>
+  </div>
+
+  <div class="sqm-card">
+    <h3>自动带宽测速</h3>
+    <button class="cbi-button cbi-button-apply" onclick="runSpeedtest()">开始测速</button>
+    <pre id="speedtest-result" class="sqm-pre"></pre>
+  </div>
+</div>
+
+<script>
+let currentWindow = '5m';
+let timer = null;
+let lastPoints = [];
+
+function setWindow(w) {
+  currentWindow = w;
+  document.getElementById('btn-1m').className = 'cbi-button' + (w === '1m' ? ' cbi-button-apply' : '');
+  document.getElementById('btn-5m').className = 'cbi-button' + (w === '5m' ? ' cbi-button-apply' : '');
+  document.getElementById('btn-1h').className = 'cbi-button' + (w === '1h' ? ' cbi-button-apply' : '');
+  loadHistory();
+}
+
+function toggleAuto() {
+  const enabled = document.getElementById('auto').checked;
+  if (enabled && !timer) timer = setInterval(loadHistory, 3000);
+  if (!enabled && timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+}
+
+function fmt(v, unit) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '-- ' + unit;
+  return String(v) + ' ' + unit;
+}
+
+function nowText() {
+  const d = new Date();
+  const t = n => (n < 10 ? '0' + n : '' + n);
+  return t(d.getHours()) + ':' + t(d.getMinutes()) + ':' + t(d.getSeconds());
+}
+
+function tickStep(raw) {
+  if (!isFinite(raw) || raw <= 0) return 1;
+  const e = Math.floor(Math.log10(raw));
+  const b = Math.pow(10, e);
+  const f = raw / b;
+  if (f <= 1) return 1 * b;
+  if (f <= 2) return 2 * b;
+  if (f <= 5) return 5 * b;
+  return 10 * b;
+}
+
+function drawLine(canvasId, points, valueKey, color, ymin, ymax) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 600;
+  const h = canvas.clientHeight || 200;
+  canvas.width = Math.floor(w * dpr);
+  canvas.height = Math.floor(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const padL = 56, padR = 14, padT = 12, padB = 28;
+  const pw = w - padL - padR;
+  const ph = h - padT - padB;
+
+  const vals = points.map(p => Number(p[valueKey])).filter(v => isFinite(v) && v >= 0);
+  if (!vals.length) {
+    ctx.fillStyle = '#666';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('暂无数据', padL + 8, padT + 16);
+    return;
+  }
+
+  let minv = ymin !== undefined ? ymin : Math.min.apply(null, vals);
+  let maxv = ymax !== undefined ? ymax : Math.max.apply(null, vals);
+  if (minv === maxv) maxv = minv + 1;
+  const step = tickStep((maxv - minv) / 4);
+  minv = Math.floor(minv / step) * step;
+  maxv = Math.ceil(maxv / step) * step;
+
+  const xAt = i => points.length <= 1 ? padL : padL + (i * pw / (points.length - 1));
+  const yAt = v => padT + (maxv - v) * ph / (maxv - minv);
+
+  ctx.strokeStyle = '#e8e8e8';
+  ctx.fillStyle = '#666';
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + ph * i / 4;
+    const v = maxv - (maxv - minv) * i / 4;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.fillText(v.toFixed(v >= 100 ? 0 : 2), padL - 6, y);
+  }
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let i = 0; i <= 4; i++) {
+    const idx = Math.round((points.length - 1) * i / 4);
+    const x = xAt(idx);
+    const ts = Number(points[idx].time || 0) * 1000;
+    const d = new Date(ts);
+    const label = (d.getHours() + '').padStart(2, '0') + ':' + (d.getMinutes() + '').padStart(2, '0') + (currentWindow === '1h' ? '' : ':' + (d.getSeconds() + '').padStart(2, '0'));
+    ctx.fillText(label, x, padT + ph + 8);
+  }
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < points.length; i++) {
+    const v = Number(points[i][valueKey]);
+    if (!isFinite(v) || v < 0) { started = false; continue; }
+    const x = xAt(i), y = yAt(v);
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function loadHistory() {
+  fetch('<%=luci.dispatcher.build_url("admin/services/sqm_controller/get_monitor_history")%>?window=' + encodeURIComponent(currentWindow), { cache: 'no-store' })
+    .then(r => r.json())
+    .then(d => {
+      const points = Array.isArray(d.points) ? d.points : [];
+      lastPoints = points;
+
+      const cur = d.current || {};
+      document.getElementById('val-bw').innerText = fmt(cur.bandwidth_kbps ?? cur.bandwidth, 'kbps');
+      document.getElementById('val-lat').innerText = fmt(cur.latency, 'ms');
+      document.getElementById('val-loss').innerText = fmt(cur.loss, '%');
+
+      drawLine('chart-bw', points, 'bandwidth_kbps', '#2d8cf0');
+      drawLine('chart-lat', points, 'latency', '#13a87d');
+      drawLine('chart-loss', points, 'loss', '#e85d04', 0, 100);
+
+      document.getElementById('last-update').innerText = '更新时间: ' + nowText();
+    })
+    .catch(err => {
+      document.getElementById('last-update').innerText = '请求失败: ' + String(err);
+    });
+}
+
+function exportCsv() {
+  if (!lastPoints.length) {
+    alert('暂无可导出的历史数据');
+    return;
+  }
+  const lines = ['timestamp,time_iso,bandwidth_kbps,latency_ms,loss_percent'];
+  for (const p of lastPoints) {
+    const ts = Number(p.time || 0);
+    const iso = ts ? new Date(ts * 1000).toISOString() : '';
+    const bw = p.bandwidth_kbps ?? p.bandwidth ?? '';
+    const lat = p.latency ?? '';
+    const loss = p.loss ?? '';
+    lines.push([ts || '', iso, bw, lat, loss].join(','));
+  }
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sqm-monitor-' + currentWindow + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function runSpeedtest() {
+  const el = document.getElementById('speedtest-result');
+  el.textContent = '测速中，请稍候...';
+  fetch('<%=luci.dispatcher.build_url("admin/services/sqm_controller/speedtest")%>', { cache: 'no-store' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) {
+        el.textContent = '失败: ' + d.error + (d.raw ? ('\n\n详情:\n' + d.raw) : '');
+        return;
+      }
+      const lines = [];
+      lines.push('测速完成');
+      if (d.backend) lines.push('后端: ' + d.backend);
+      lines.push('下载(写入值): ' + (d.download ?? '--') + ' kbps');
+      lines.push('上传(保留值): ' + (d.upload ?? '--') + ' kbps');
+      if (d.http_code) lines.push('HTTP: ' + d.http_code);
+      if (d.time_total) lines.push('耗时: ' + d.time_total + ' s');
+      if (d.source_url) lines.push('来源: ' + d.source_url);
+      if (d.runtime && d.runtime.message) lines.push('应用结果: ' + d.runtime.message);
+      el.textContent = lines.join('\n');
+      loadHistory();
+    })
+    .catch(err => {
+      el.textContent = '请求失败: ' + String(err);
+    });
+}
+
+window.onload = function() {
+  setWindow('5m');
+  loadHistory();
+  if (!timer) timer = setInterval(loadHistory, 3000);
+};
+</script>
+
+<%+footer%>

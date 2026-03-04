@@ -1,0 +1,186 @@
+<%+header%>
+<%
+local sys = require "luci.sys"
+local uci = require "luci.model.uci".cursor()
+local iface_cur = uci:get("sqm_controller", "basic_config", "interface") or "eth0"
+local download_cur = uci:get("sqm_controller", "basic_config", "download_speed") or "100000"
+local upload_cur = uci:get("sqm_controller", "basic_config", "upload_speed") or "10000"
+local algo_cur = uci:get("sqm_controller", "basic_config", "queue_algorithm") or "fq_codel"
+local enabled_cur = uci:get("sqm_controller", "basic_config", "enabled") or "0"
+
+local devs = sys.net.devices() or {}
+table.sort(devs)
+%>
+
+<style>
+.sqm-card { border:1px solid #e5e5e5; border-radius:8px; padding:12px; margin-bottom:12px; background:#fff; }
+.sqm-steps { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.sqm-step { padding:4px 10px; border-radius:999px; border:1px solid #ddd; background:#fafafa; }
+.sqm-step.active { border-color:#9bd2ff; background:#ecf7ff; }
+.sqm-actions { display:flex; gap:10px; }
+.sqm-result { min-height:180px; max-height:320px; overflow:auto; border:1px solid #ddd; border-radius:8px; padding:10px; white-space:pre-wrap; font-family:monospace; }
+</style>
+
+<div class="cbi-map">
+  <h2 name="content"><%:SQM三步配置向导%></h2>
+
+  <div class="sqm-steps">
+    <span id="step-pill-1" class="sqm-step active">1. 接口选择</span>
+    <span id="step-pill-2" class="sqm-step">2. 带宽/算法</span>
+    <span id="step-pill-3" class="sqm-step">3. 启停确认</span>
+  </div>
+
+  <div id="step-1" class="sqm-card">
+    <h3>步骤1：接口选择</h3>
+    <label>网络接口</label>
+    <div>
+      <select id="iface">
+        <% for _, d in ipairs(devs) do %>
+          <% if d ~= "lo" then %>
+            <option value="<%=d%>" <%=d == iface_cur and 'selected="selected"' or ""%>><%=d%></option>
+          <% end %>
+        <% end %>
+      </select>
+    </div>
+  </div>
+
+  <div id="step-2" class="sqm-card" style="display:none;">
+    <h3>步骤2：带宽与算法</h3>
+    <div>
+      <label>下载带宽 (kbit/s)</label>
+      <input type="number" id="download" min="1" value="<%=download_cur%>">
+    </div>
+    <div style="margin-top:8px;">
+      <label>上传带宽 (kbit/s)</label>
+      <input type="number" id="upload" min="1" value="<%=upload_cur%>">
+    </div>
+    <div style="margin-top:8px;">
+      <label>队列算法</label>
+      <select id="algorithm">
+        <option value="fq_codel" <%=algo_cur == "fq_codel" and 'selected="selected"' or ""%>>fq_codel</option>
+        <option value="cake" <%=algo_cur == "cake" and 'selected="selected"' or ""%>>cake</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="step-3" class="sqm-card" style="display:none;">
+    <h3>步骤3：启停确认</h3>
+    <div>
+      <label><input type="radio" name="enabled_mode" value="1" <%=enabled_cur == "1" and 'checked="checked"' or ""%>> 启用并应用</label>
+      <label style="margin-left:20px;"><input type="radio" name="enabled_mode" value="0" <%=enabled_cur ~= "1" and 'checked="checked"' or ""%>> 停用并清除规则</label>
+    </div>
+    <pre id="summary" style="margin-top:10px;border:1px solid #ddd;padding:10px;white-space:pre-wrap;"></pre>
+  </div>
+
+  <div class="sqm-card">
+    <div class="sqm-actions">
+      <button id="btn-prev" class="cbi-button" onclick="prevStep()" disabled>上一步</button>
+      <button id="btn-next" class="cbi-button cbi-button-apply" onclick="nextStep()">下一步</button>
+      <button id="btn-apply" class="cbi-button cbi-button-apply" onclick="applyWizard()" style="display:none;">确认并应用</button>
+    </div>
+  </div>
+
+  <div class="sqm-card">
+    <h3>执行结果</h3>
+    <pre id="result" class="sqm-result">尚未执行</pre>
+  </div>
+</div>
+
+<script>
+let currentStep = 1;
+
+function selectedEnabled() {
+  const el = document.querySelector('input[name="enabled_mode"]:checked');
+  return el ? el.value : '1';
+}
+
+function renderSummary() {
+  const iface = document.getElementById('iface').value;
+  const download = document.getElementById('download').value;
+  const upload = document.getElementById('upload').value;
+  const algorithm = document.getElementById('algorithm').value;
+  const enabled = selectedEnabled();
+  const lines = [];
+  lines.push('接口: ' + iface);
+  lines.push('下载带宽: ' + download + ' kbit/s');
+  lines.push('上传带宽: ' + upload + ' kbit/s');
+  lines.push('队列算法: ' + algorithm);
+  lines.push('启停策略: ' + (enabled === '1' ? '启用并应用' : '停用并清除规则'));
+  document.getElementById('summary').textContent = lines.join('\n');
+}
+
+function setStep(step) {
+  currentStep = step;
+  document.getElementById('step-1').style.display = step === 1 ? '' : 'none';
+  document.getElementById('step-2').style.display = step === 2 ? '' : 'none';
+  document.getElementById('step-3').style.display = step === 3 ? '' : 'none';
+
+  document.getElementById('step-pill-1').className = 'sqm-step' + (step === 1 ? ' active' : '');
+  document.getElementById('step-pill-2').className = 'sqm-step' + (step === 2 ? ' active' : '');
+  document.getElementById('step-pill-3').className = 'sqm-step' + (step === 3 ? ' active' : '');
+
+  document.getElementById('btn-prev').disabled = step === 1;
+  document.getElementById('btn-next').style.display = step === 3 ? 'none' : '';
+  document.getElementById('btn-apply').style.display = step === 3 ? '' : 'none';
+
+  if (step === 3) renderSummary();
+}
+
+function validateStep(step) {
+  if (step === 1) {
+    if (!document.getElementById('iface').value) {
+      alert('请选择接口');
+      return false;
+    }
+  }
+  if (step === 2) {
+    const d = Number(document.getElementById('download').value);
+    const u = Number(document.getElementById('upload').value);
+    if (!Number.isFinite(d) || d <= 0) { alert('下载带宽必须是正整数'); return false; }
+    if (!Number.isFinite(u) || u <= 0) { alert('上传带宽必须是正整数'); return false; }
+  }
+  return true;
+}
+
+function nextStep() {
+  if (!validateStep(currentStep)) return;
+  setStep(Math.min(3, currentStep + 1));
+}
+
+function prevStep() {
+  setStep(Math.max(1, currentStep - 1));
+}
+
+function applyWizard() {
+  if (!validateStep(2)) return;
+
+  const fd = new URLSearchParams();
+  fd.append('iface', document.getElementById('iface').value);
+  fd.append('download', document.getElementById('download').value);
+  fd.append('upload', document.getElementById('upload').value);
+  fd.append('algorithm', document.getElementById('algorithm').value);
+  fd.append('enabled', selectedEnabled());
+
+  const out = document.getElementById('result');
+  out.textContent = '正在应用配置...';
+
+  fetch('<%=luci.dispatcher.build_url("admin/services/sqm_controller/wizard_apply")%>', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: fd.toString()
+  })
+    .then(r => r.json())
+    .then(d => {
+      out.textContent = JSON.stringify(d, null, 2);
+    })
+    .catch(err => {
+      out.textContent = '请求失败: ' + String(err);
+    });
+}
+
+window.onload = function() {
+  setStep(1);
+};
+</script>
+
+<%+footer%>

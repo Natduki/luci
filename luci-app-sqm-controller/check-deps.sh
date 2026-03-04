@@ -1,6 +1,5 @@
 ﻿#!/bin/sh
 
-# 检查必要的包是否安装
 check_dependency() {
     if ! opkg list-installed | grep -q "^$1"; then
         echo "Missing dependency: $1"
@@ -9,10 +8,8 @@ check_dependency() {
     return 0
 }
 
-# 必需的依赖
-REQUIRED_PKGS="sqm-scripts tc python3 python3-light luci-lib-jsonc"
+REQUIRED_PKGS="ip-full tc-full python3 python3-light curl ca-bundle kmod-ifb kmod-sched-core kmod-sched-cake luci-base luci-compat luci-lib-ip luci-lib-nixio"
 
-# 检查所有依赖
 MISSING=""
 for pkg in $REQUIRED_PKGS; do
     if ! check_dependency "$pkg"; then
@@ -22,7 +19,8 @@ done
 
 if [ -n "$MISSING" ]; then
     echo "Missing packages:$MISSING"
-    echo "Please install them with: opkg install$MISSING"
+    echo "Please install them with:"
+    echo "  opkg install$MISSING"
     exit 1
 fi
 
