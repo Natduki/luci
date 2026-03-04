@@ -1,0 +1,36 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10 
+# This script executes actions synchronously and does not register a procd instance.
+# Keep procd disabled to avoid "ubus call service delete ... Not found" during upgrade.
+USE_PROCD=0
+
+CONFIG="sqm_controller"
+PYTHON="/usr/bin/python3"
+APP="/usr/lib/sqm-controller/main.py"
+
+start_service() {
+    config_load "$CONFIG"
+
+    local autostart
+    config_get autostart advanced_config autostart "0"
+
+    if [ "$autostart" != "1" ]; then
+        echo "autostart disabled, manual start continues"
+    fi
+
+    echo "Starting SQM Controller..."
+    $PYTHON $APP --enable
+}
+
+stop_service() {
+    echo "Stopping SQM Controller..."
+    $PYTHON $APP --disable
+}
+
+restart() {
+    stop_service
+    sleep 1
+    start_service
+}

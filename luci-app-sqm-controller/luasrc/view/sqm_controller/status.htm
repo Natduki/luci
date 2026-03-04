@@ -1,0 +1,102 @@
+<%+header%>
+
+<div class="cbi-map">
+    <h2 name="content"><%:SQM流量控制器 - 状态监控%></h2>
+    <div class="cbi-map-descr"><%:查看服务状态与TC规则生效情况。%></div>
+
+    <div class="cbi-section-node">
+        <div class="cbi-value">
+            <label class="cbi-label"><%:服务操作%></label>
+            <div class="cbi-value-field">
+                <button class="cbi-button cbi-button-apply" onclick="startService()"><%:启动服务%></button>
+                <button class="cbi-button cbi-button-reset" onclick="stopService()"><%:停止服务%></button>
+                <button class="cbi-button cbi-button-reload" onclick="restartService()"><%:重启服务%></button>
+                <button class="cbi-button" onclick="refreshStatus()"><%:刷新状态%></button>
+            </div>
+        </div>
+    </div>
+
+    <div class="cbi-section">
+        <h3><%:服务状态%></h3>
+        <div class="cbi-value"><label class="cbi-label"><%:当前状态%></label><span id="status-text" class="cbi-value-field">-</span></div>
+        <div class="cbi-value"><label class="cbi-label"><%:进程信息%></label><span id="pid-text" class="cbi-value-field">-</span></div>
+        <div class="cbi-value"><label class="cbi-label"><%:TC规则状态%></label><span id="tc-text" class="cbi-value-field">-</span></div>
+        <div class="cbi-value"><label class="cbi-label"><%:ECN当前状态%></label><span id="ecn-text" class="cbi-value-field">-</span></div>
+    </div>
+
+    <div class="cbi-section">
+        <h3>WAN 接口 TC</h3>
+        <pre id="tc-wan" style="background:#111;color:#0f0;padding:10px;overflow:auto;"></pre>
+    </div>
+
+    <div class="cbi-section">
+        <h3>IFB (下载) TC</h3>
+        <pre id="tc-ifb" style="background:#111;color:#0f0;padding:10px;overflow:auto;"></pre>
+    </div>
+</div>
+
+<script>
+function refreshStatus() {
+    const statusMap = {
+        running: "运行中",
+        stopped: "未启动",
+        applied: "已应用",
+        not_applied: "未应用"
+    };
+    const ecnMap = {
+        enabled: "已启用",
+        disabled: "已禁用",
+        upload_only: "仅上行可判定",
+        download_only: "仅下行可判定",
+        partial_enabled: "部分启用",
+        partial_disabled: "部分禁用",
+        unknown: "未知",
+        not_applied: "未生效"
+    };
+
+    fetch('<%=luci.dispatcher.build_url("admin/services/sqm_controller/get_status")%>')
+        .then(r => r.json())
+        .then(d => {
+            document.getElementById("status-text").innerText = statusMap[d.service_status] || d.service_status || "-";
+            document.getElementById("pid-text").innerText = d.pid || "-";
+            document.getElementById("tc-text").innerText = d.error ? ("异常: " + d.error) : (statusMap[d.tc_state] || d.tc_state || "-");
+            document.getElementById("ecn-text").innerText = ecnMap[d.ecn_state] || d.ecn_state || "-";
+            document.getElementById("tc-wan").innerText = d.tc_wan || "";
+            document.getElementById("tc-ifb").innerText = d.tc_ifb || "";
+        })
+        .catch(err => {
+            document.getElementById("status-text").innerText = "请求失败";
+            document.getElementById("tc-text").innerText = String(err);
+            document.getElementById("ecn-text").innerText = "-";
+        });
+}
+
+function callService(url) {
+    return fetch(url)
+        .then(r => r.json())
+        .then(d => {
+            if (!d.success) {
+                alert("操作失败: " + (d.output || d.error || "unknown error"));
+            }
+            return d;
+        })
+        .catch(err => {
+            alert("请求失败: " + String(err));
+            return { success: false, error: String(err) };
+        });
+}
+
+function startService() {
+    callService('<%=luci.dispatcher.build_url("admin/services/sqm_controller/start_service")%>').then(refreshStatus);
+}
+function stopService() {
+    callService('<%=luci.dispatcher.build_url("admin/services/sqm_controller/stop_service")%>').then(refreshStatus);
+}
+function restartService() {
+    callService('<%=luci.dispatcher.build_url("admin/services/sqm_controller/restart_service")%>').then(refreshStatus);
+}
+
+window.onload = refreshStatus;
+</script>
+
+<%+footer%>
