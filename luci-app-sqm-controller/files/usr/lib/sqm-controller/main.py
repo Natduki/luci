@@ -11,6 +11,10 @@ import time
 from config_manager import ConfigManager
 from tc_manager import TCManager
 from template_manager import get_template
+import firewall_manager
+import policy_engine
+import traffic_classifier
+import traffic_stats
 
 
 LOG_FILE = "/var/log/sqm_controller.log"
@@ -20,6 +24,7 @@ ALLOWED_ALGORITHMS = {"fq_codel", "cake"}
 ALLOWED_LOG_LEVELS = {"debug", "info", "warn", "warning", "error"}
 LOG_MAX_BYTES = 256 * 1024
 LOG_BACKUP_COUNT = 5
+POLICY_REPORT_FILE = "/var/log/sqm_policy.jsonl"
 
 
 def setup_logging():
@@ -128,6 +133,48 @@ def _merge_ecn_state(wan_state, ifb_state, running):
     if wan_state or ifb_state:
         return "partial_enabled"
     return "partial_disabled"
+
+
+def _csv_escape(value):
+    text = "" if value is None else str(value)
+    if any(ch in text for ch in [",", '"', "\n", "\r"]):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+
+
+def _dict_get(data, path, default=""):
+    current = data
+    for key in path:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+    return current if current is not None else default
+
+
+def _load_policy_report_entries(path=POLICY_REPORT_FILE):
+    if not os.path.exists(path):
+        return None, {"success": False, "error": "report log not found", "details": {"path": path}}
+
+    try:
+        with open(path, "r", encoding="utf-8") as file_handle:
+            lines = [line.strip() for line in file_handle if line.strip()]
+    except Exception as exc:
+        return None, {"success": False, "error": f"failed to read report log: {exc}", "details": {"path": path}}
+
+    if not lines:
+        return None, {"success": False, "error": "report log is empty", "details": {"path": path}}
+
+    entries = []
+    for index, line in enumerate(lines, start=1):
+        try:
+            entries.append(json.loads(line))
+        except Exception as exc:
+            return None, {
+                "success": False,
+                "error": f"invalid jsonl line at {index}: {exc}",
+                "details": {"path": path, "line": index},
+            }
+    return entries, None
 
 
 class SQMController:
@@ -482,6 +529,13 @@ def main():
     parser.add_argument("--validate-config")
     parser.add_argument("--restore-config")
     parser.add_argument("--no-apply", action="store_true")
+    parser.add_argument("--apply-classifier", action="store_true")
+    parser.add_argument("--clear-classifier", action="store_true")
+    parser.add_argument("--get-class-stats", action="store_true")
+    parser.add_argument("--policy-once", action="store_true")
+    parser.add_argument("--export-report", action="store_true")
+    parser.add_argument("--format", choices=["json", "csv"], default="json")
+    parser.add_argument("--dev", default="ifb0")
     args = parser.parse_args()
 
     ctl = SQMController()
@@ -510,6 +564,114 @@ def main():
         result = ctl.apply_template(args.template)
         print(json.dumps(result, ensure_ascii=False))
         raise SystemExit(0 if result.get("success") else 1)
+    elif args.apply_classifier:
+        try:
+            run_fn = getattr(traffic_classifier, "run", None)
+            if callable(run_fn):
+                result = run_fn()
+            else:
+                result = traffic_classifier.run_classifier(config_path=ctl.config_manager.config_path)
+        except Exception as exc:
+            result = {"success": False, "error": str(exc)}
+        print(json.dumps(result, ensure_ascii=False))
+        raise SystemExit(0 if result.get("success") else 1)
+    elif args.clear_classifier:
+        errors = []
+        firewall_result = {}
+        tc_result = {"success": False}
+
+        try:
+            clear_fn = getattr(firewall_manager, "clear", None)
+            if callable(clear_fn):
+                firewall_result = clear_fn(prefer_backend="auto")
+            else:
+                firewall_result = firewall_manager.clear_rules()
+        except Exception as exc:
+            firewall_result = {"success": False, "error": str(exc)}
+        if not firewall_result.get("success"):
+            errors.append(f"firewall: {firewall_result.get('error', 'clear failed')}")
+
+        try:
+            settings = ctl.config_manager.get_settings()["all"]
+            tc_ok = TCManager(settings).clear_classifier_tc()
+            tc_result = {"success": bool(tc_ok)}
+            if not tc_ok:
+                tc_result["error"] = "clear_classifier_tc failed"
+        except Exception as exc:
+            tc_result = {"success": False, "error": str(exc)}
+        if not tc_result.get("success"):
+            errors.append(f"tc: {tc_result.get('error', 'clear failed')}")
+
+        result = {
+            "success": (len(errors) == 0),
+            "firewall": firewall_result,
+            "tc": tc_result,
+            "errors": errors,
+        }
+        print(json.dumps(result, ensure_ascii=False))
+        raise SystemExit(0 if result.get("success") else 1)
+    elif args.get_class_stats:
+        try:
+            dev = (args.dev or "ifb0").strip() or "ifb0"
+            if dev in {"iface", "wan", "interface"}:
+                dev = ctl.config_manager.get_interface()
+            result = traffic_stats.collect(dev)
+        except Exception as exc:
+            result = {"success": False, "error": str(exc), "details": {}}
+        print(json.dumps(result, ensure_ascii=False))
+        raise SystemExit(0 if result.get("success") else 1)
+    elif args.policy_once:
+        try:
+            result = policy_engine.run_once(config_path=ctl.config_manager.config_path)
+        except Exception as exc:
+            result = {"success": False, "error": str(exc), "details": {}}
+        print(json.dumps(result, ensure_ascii=False))
+        raise SystemExit(0 if result.get("success") else 1)
+    elif args.export_report:
+        entries, err = _load_policy_report_entries()
+        if err:
+            print(json.dumps(err, ensure_ascii=False))
+            raise SystemExit(1)
+
+        fmt = (args.format or "json").strip().lower()
+        if fmt not in {"json", "csv"}:
+            result = {"success": False, "error": "invalid format", "details": {"format": args.format}}
+            print(json.dumps(result, ensure_ascii=False))
+            raise SystemExit(1)
+
+        if fmt == "json":
+            result = {
+                "success": True,
+                "format": "json",
+                "count": len(entries),
+                "entries": entries,
+            }
+            print(json.dumps(result, ensure_ascii=False))
+            raise SystemExit(0)
+
+        headers = [
+            "time",
+            "decision.mode",
+            "decision.reason",
+            "inputs.monitor.latency",
+            "inputs.monitor.loss",
+            "inputs.traffic_stats.total_kbps",
+            "changed",
+        ]
+        rows = [",".join(headers)]
+        for item in entries:
+            row = [
+                _dict_get(item, ["time"], ""),
+                _dict_get(item, ["decision", "mode"], ""),
+                _dict_get(item, ["decision", "reason"], ""),
+                _dict_get(item, ["inputs", "monitor", "latency"], ""),
+                _dict_get(item, ["inputs", "monitor", "loss"], ""),
+                _dict_get(item, ["inputs", "traffic_stats", "total_kbps"], ""),
+                _dict_get(item, ["changed"], ""),
+            ]
+            rows.append(",".join(_csv_escape(value) for value in row))
+        print("\n".join(rows))
+        raise SystemExit(0)
     elif args.enable:
         ok = ctl.enable()
         print("enabled" if ok else "enable failed")
