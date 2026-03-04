@@ -1,0 +1,172 @@
+<%+header%>
+
+<style>
+.sqm-wrap { max-width: 1200px; }
+.sqm-topbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0 12px; }
+.sqm-title { margin:0; font-size:22px; }
+.sqm-badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; color:#fff; background:#777; }
+.sqm-badge.ok { background:#2e7d32; }
+.sqm-badge.warn { background:#ed6c02; }
+.sqm-badge.bad { background:#d32f2f; }
+.sqm-card { border:1px solid #e5e5e5; border-radius:8px; padding:12px; background:#fff; margin-bottom:12px; }
+.sqm-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+@media (max-width: 900px) { .sqm-grid { grid-template-columns:1fr; } }
+.sqm-k { font-size:12px; color:#666; }
+.sqm-v { font-size:16px; font-weight:600; margin-top:2px; word-break:break-all; }
+.sqm-pre { border:1px solid #e5e5e5; border-radius:8px; background:#fafafa; padding:10px; max-height:380px; overflow:auto; margin:0; }
+.sqm-note { color:#666; font-size:12px; }
+</style>
+
+<div class="cbi-map sqm-wrap">
+  <h2 class="sqm-title"><%:策略引擎%></h2>
+
+  <div class="sqm-topbar">
+    <span id="status-badge" class="sqm-badge">--</span>
+    <button id="btn-run-once" class="cbi-button cbi-button-apply"><%:执行一次策略%></button>
+    <button id="btn-refresh" class="cbi-button"><%:刷新快照%></button>
+    <span id="hint-text" class="sqm-note"></span>
+  </div>
+
+  <div class="sqm-grid">
+    <div class="sqm-card">
+      <div class="sqm-k">mode</div>
+      <div id="val-mode" class="sqm-v">--</div>
+      <div class="sqm-k">reason</div>
+      <div id="val-reason" class="sqm-v">--</div>
+      <div class="sqm-k">changed</div>
+      <div id="val-changed" class="sqm-v">--</div>
+      <div class="sqm-k">actions</div>
+      <div id="val-actions" class="sqm-v">--</div>
+      <div class="sqm-k">last_change_ts</div>
+      <div id="val-last-change" class="sqm-v">--</div>
+    </div>
+    <div class="sqm-card">
+      <div class="sqm-k"><%:最近一次返回%></div>
+      <pre id="result-pre" class="sqm-pre">--</pre>
+    </div>
+  </div>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var POLICY_ONCE_URL = "<%=luci.dispatcher.build_url(\"admin/services/sqm_controller/policy_once\")%>";
+  var STATE_URL = "<%=luci.dispatcher.build_url(\"admin/services/sqm_controller/get_policy_state\")%>";
+  var lastSnapshot = null;
+
+  function el(id) { return document.getElementById(id); }
+  function setBadge(kind, text) {
+    var node = el("status-badge");
+    node.className = "sqm-badge " + kind;
+    node.textContent = text;
+  }
+  function toText(v) {
+    if (v === null || v === undefined || v === "") return "--";
+    if (typeof v === "object") {
+      try { return JSON.stringify(v); } catch (e) { return "--"; }
+    }
+    return String(v);
+  }
+  function tsText(v) {
+    var n = Number(v);
+    if (!isFinite(n) || n <= 0) return "--";
+    try { return new Date(n * 1000).toLocaleString(); } catch (e) { return "--"; }
+  }
+  function actionsCount(data) {
+    var actions = data && data.actions;
+    return Array.isArray(actions) ? actions.length : 0;
+  }
+  function render(data) {
+    data = (data && typeof data === "object") ? data : {};
+    var mode = toText(data.mode);
+    var reason = toText(data.reason);
+    var changed = (typeof data.changed === "boolean") ? (data.changed ? "true" : "false") : "--";
+    var count = actionsCount(data);
+    var lastChange = (data.last_change_ts !== undefined) ? tsText(data.last_change_ts) : "--";
+
+    el("val-mode").textContent = mode;
+    el("val-reason").textContent = reason;
+    el("val-changed").textContent = changed;
+    el("val-actions").textContent = String(count);
+    el("val-last-change").textContent = lastChange;
+
+    if (data.success === true) {
+      if (data.changed === true) setBadge("ok", "changed");
+      else setBadge("warn", "no-change");
+    } else if (data.success === false) {
+      setBadge("bad", "failed");
+    } else {
+      setBadge("warn", "unknown");
+    }
+  }
+  function pretty(data) {
+    try { return JSON.stringify(data, null, 2); } catch (e) { return String(data); }
+  }
+  function setHint(text) {
+    el("hint-text").textContent = text || "";
+  }
+
+  function fetchStateIfExists() {
+    return fetch(STATE_URL, { cache: "no-store" })
+      .then(function(resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function(data) {
+        if (!data || typeof data !== "object") throw new Error("invalid json");
+        lastSnapshot = data;
+        render(data);
+        setHint("已加载状态接口快照");
+      })
+      .catch(function() {
+        setHint("未提供状态接口，当前页使用 policy_once 结果作为快照");
+      });
+  }
+
+  function runOnce() {
+    setHint("策略执行中...");
+    return fetch(POLICY_ONCE_URL, { cache: "no-store" })
+      .then(function(resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function(data) {
+        if (!data || typeof data !== "object") throw new Error("invalid json");
+        lastSnapshot = data;
+        render(data);
+        el("result-pre").textContent = pretty(data);
+        setHint("已完成一次策略执行");
+      })
+      .catch(function(err) {
+        var out = {
+          success: false,
+          error: "policy_once 请求失败",
+          details: (err && err.message) ? err.message : String(err)
+        };
+        render(out);
+        el("result-pre").textContent = pretty(out);
+        setHint("执行失败");
+      });
+  }
+
+  function refreshView() {
+    if (lastSnapshot) {
+      render(lastSnapshot);
+      el("result-pre").textContent = pretty(lastSnapshot);
+    } else {
+      el("result-pre").textContent = "--";
+      render({});
+    }
+    fetchStateIfExists();
+  }
+
+  el("btn-run-once").addEventListener("click", runOnce);
+  el("btn-refresh").addEventListener("click", refreshView);
+
+  render({});
+  fetchStateIfExists().then(function() {
+    if (!lastSnapshot) runOnce();
+  });
+})();
+</script>
+
+<%+footer%>
