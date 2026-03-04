@@ -67,6 +67,11 @@ function index()
     entry({"admin", "services", "sqm_controller", "clear_logs"}, call("action_clear_logs")).leaf = true
     entry({"admin", "services", "sqm_controller", "download_log"}, call("action_download_log")).leaf = true
     entry({"admin", "services", "sqm_controller", "rotate_logs"}, call("action_rotate_logs")).leaf = true
+    entry({"admin", "services", "sqm_controller", "apply_classifier"}, call("action_apply_classifier")).leaf = true
+    entry({"admin", "services", "sqm_controller", "clear_classifier"}, call("action_clear_classifier")).leaf = true
+    entry({"admin", "services", "sqm_controller", "get_class_stats"}, call("action_get_class_stats")).leaf = true
+    entry({"admin", "services", "sqm_controller", "policy_once"}, call("action_policy_once")).leaf = true
+    entry({"admin", "services", "sqm_controller", "export_report"}, call("action_export_report")).leaf = true
 end
 
 function action_get_status()
@@ -320,4 +325,77 @@ function action_rotate_logs()
         error = "日志轮转后端失败"
     })
     http.write_json(data)
+end
+
+function action_apply_classifier()
+    local data = exec_json("python3 " .. APP_PY .. " --apply-classifier", {
+        error = "apply_classifier failed"
+    })
+    http.write_json(data)
+end
+
+function action_clear_classifier()
+    local data = exec_json("python3 " .. APP_PY .. " --clear-classifier", {
+        error = "clear_classifier failed"
+    })
+    http.write_json(data)
+end
+
+function action_get_class_stats()
+    local dev = http.formvalue("dev") or "ifb0"
+    if not (
+        dev == "ifb0" or
+        dev == "iface" or
+        dev == "wan" or
+        dev == "interface" or
+        dev:match("^[A-Za-z0-9_.:%-]+$")
+    ) then
+        dev = "ifb0"
+    end
+
+    local data = exec_json(
+        "python3 " .. APP_PY .. " --get-class-stats --dev " .. util.shellquote(dev),
+        { error = "get_class_stats failed" }
+    )
+    http.write_json(data)
+end
+
+function action_policy_once()
+    local data = exec_json("python3 " .. APP_PY .. " --policy-once", {
+        error = "policy_once failed"
+    })
+    http.write_json(data)
+end
+
+function action_export_report()
+    local fmt = (http.formvalue("format") or "json"):lower()
+    if fmt ~= "json" and fmt ~= "csv" then
+        fmt = "json"
+    end
+
+    local code, out = exec_with_rc("python3 " .. APP_PY .. " --export-report --format " .. util.shellquote(fmt))
+    if code ~= 0 then
+        http.status(500, "Internal Server Error")
+        http.prepare_content("application/json")
+        http.header("Content-Type", "application/json; charset=utf-8")
+        http.write(jsonc.stringify({
+            success = false,
+            code = code,
+            error = "export_report failed",
+            output = out or ""
+        }))
+        return
+    end
+
+    if fmt == "json" then
+        http.prepare_content("application/json")
+        http.header("Content-Type", "application/json; charset=utf-8")
+        http.write(out or "")
+        return
+    end
+
+    http.header("Content-Disposition", 'attachment; filename="sqm-policy-report.csv"')
+    http.prepare_content("text/csv")
+    http.header("Content-Type", "text/csv; charset=utf-8")
+    http.write(out or "")
 end
