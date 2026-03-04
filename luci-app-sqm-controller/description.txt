@@ -1,0 +1,19 @@
+﻿luci-app-sqm-controller - SQM Controller Web Interface
+
+SQM Controller provides a web interface for configuring Smart Queue Management
+on OpenWrt routers. It includes:
+
+- Real-time status monitoring
+- Traffic statistics
+- Easy configuration of SQM parameters
+- Support for multiple queue algorithms
+- Log viewing capabilities
+
+Features:
+  * Web-based configuration via LuCI
+  * Support for fq_codel, CAKE, and SFQ
+  * Real-time traffic monitoring
+  * Automatic service management
+  * Comprehensive logging
+
+Depends on: sqm-scripts, tc, python3, luci-lib-jsonc
