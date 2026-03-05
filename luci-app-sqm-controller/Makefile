@@ -1,8 +1,8 @@
-﻿include $(TOPDIR)/rules.mk
+include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-sqm-controller
-PKG_VERSION:=2.0.0
-PKG_RELEASE:=2
+PKG_VERSION:=3.0.0
+PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=vaidurya.zws@qq.com
 
@@ -10,7 +10,7 @@ LUCI_TITLE:=SQM Controller Web Interface
 LUCI_DESCRIPTION:=Smart Queue Management (SQM) controller with LuCI web interface
 LUCI_PKGARCH:=all
 
-LUCI_DEPENDS:=+ip-full +tc-full +python3 +python3-light +curl +ca-bundle +kmod-ifb \
+LUCI_DEPENDS:=+python3 +python3-light +curl +ca-bundle +kmod-ifb \
               +kmod-sched-core +kmod-sched-cake \
               +luci-base +luci-compat \
               +luci-lib-ip +luci-lib-nixio
@@ -48,6 +48,12 @@ define Package/$(PKG_NAME)/install
 		$(1)/usr/lib/lua/luci/view/sqm_controller/
 	$(INSTALL_DATA) ./luasrc/view/sqm_controller/wizard.htm \
 		$(1)/usr/lib/lua/luci/view/sqm_controller/
+	$(INSTALL_DATA) ./luasrc/view/sqm_controller/traffic.htm \
+		$(1)/usr/lib/lua/luci/view/sqm_controller/
+	$(INSTALL_DATA) ./luasrc/view/sqm_controller/policy.htm \
+		$(1)/usr/lib/lua/luci/view/sqm_controller/
+	$(INSTALL_DATA) ./luasrc/view/sqm_controller/report.htm \
+		$(1)/usr/lib/lua/luci/view/sqm_controller/
 
 	# config/init
 	$(INSTALL_CONF) ./files/etc/config/sqm_controller \
@@ -79,6 +85,14 @@ define Package/$(PKG_NAME)/install
 		$(1)/usr/lib/sqm-controller/
 	$(INSTALL_BIN) ./files/usr/lib/sqm-controller/speedtest.py \
 		$(1)/usr/lib/sqm-controller/
+	$(INSTALL_BIN) ./files/usr/lib/sqm-controller/firewall_manager.py \
+		$(1)/usr/lib/sqm-controller/
+	$(INSTALL_BIN) ./files/usr/lib/sqm-controller/traffic_classifier.py \
+		$(1)/usr/lib/sqm-controller/
+	$(INSTALL_BIN) ./files/usr/lib/sqm-controller/traffic_stats.py \
+		$(1)/usr/lib/sqm-controller/
+	$(INSTALL_BIN) ./files/usr/lib/sqm-controller/policy_engine.py \
+		$(1)/usr/lib/sqm-controller/
 
 	# rpcd ACL
 	$(INSTALL_DATA) ./files/share/rpcd/acl.d/luci-app-sqm-controller.json \
@@ -94,6 +108,7 @@ define Package/$(PKG_NAME)/postinst
 	chmod 0755 /usr/lib/sqm-controller/*.py 2>/dev/null
 
 	touch /var/log/sqm_controller.log 2>/dev/null
+	touch /var/log/sqm_policy.jsonl 2>/dev/null
 
 	/etc/init.d/sqm-controller enable 2>/dev/null
 	uci -q get sqm_controller.basic_config.enabled | grep -q '^1$$' && /etc/init.d/sqm-controller restart
