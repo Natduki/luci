@@ -573,6 +573,23 @@ def main():
                 result = traffic_classifier.run_classifier(config_path=ctl.config_manager.config_path)
         except Exception as exc:
             result = {"success": False, "error": str(exc)}
+
+        if result.get("success"):
+            verify_cmd = "tc filter show dev ifb0 parent 2:"
+            verify_proc = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True)
+            verify_stdout = (verify_proc.stdout or "").strip()
+            verify_stderr = (verify_proc.stderr or "").strip()
+            if verify_proc.returncode != 0 or not verify_stdout:
+                result["success"] = False
+                result["error"] = "classifier verify failed: ifb0 parent 2: has no filters"
+                details = result.get("details")
+                if not isinstance(details, dict):
+                    details = {}
+                details["verify_cmd"] = verify_cmd
+                details["verify_rc"] = verify_proc.returncode
+                details["verify_stdout"] = verify_stdout
+                details["verify_stderr"] = verify_stderr
+                result["details"] = details
         print(json.dumps(result, ensure_ascii=False))
         raise SystemExit(0 if result.get("success") else 1)
     elif args.clear_classifier:
@@ -624,7 +641,11 @@ def main():
         try:
             result = policy_engine.run_once(config_path=ctl.config_manager.config_path)
         except Exception as exc:
-            result = {"success": False, "error": str(exc), "details": {}}
+            result = {"success": False, "error": str(exc), "details": {}, "actions": [], "changed": False}
+        if not isinstance(result, dict):
+            result = {"success": False, "error": "invalid policy_once result", "details": {}, "actions": [], "changed": False}
+        if not isinstance(result.get("actions"), list):
+            result["actions"] = []
         print(json.dumps(result, ensure_ascii=False))
         raise SystemExit(0 if result.get("success") else 1)
     elif args.export_report:

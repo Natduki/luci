@@ -2,6 +2,7 @@
 import argparse
 import json
 import logging
+import os
 import re
 
 from config_manager import ConfigManager
@@ -30,6 +31,8 @@ NFT_CTMARK_WARNING = (
     "nft backend selected: conntrack mark persistence may be unreliable in "
     "current firewall_manager implementation."
 )
+PREFERRED_CONFIG_PATH = "/etc/config/sqm_controller"
+FALLBACK_CONFIG_PATH = "/etc/config/sqm-controller"
 
 
 def _to_bool(value, default=False):
@@ -79,11 +82,11 @@ def _parse_uci_sections(path):
 
     with open(path, "r", encoding="utf-8") as file_handle:
         for lineno, raw in enumerate(file_handle, start=1):
-            line = _strip_inline_comment(raw.strip())
+            line = _strip_inline_comment(raw.rstrip("\n").rstrip("\r"))
             if not line:
                 continue
 
-            config_match = re.match(r"^config\s+([A-Za-z0-9_]+)(?:\s+(.+))?$", line)
+            config_match = re.match(r"^\s*config\s+([A-Za-z0-9_]+)(?:\s+(.+))?$", line)
             if config_match:
                 section_type = config_match.group(1)
                 section_name = _unquote(config_match.group(2) or "")
@@ -97,7 +100,7 @@ def _parse_uci_sections(path):
                 sections.append(current)
                 continue
 
-            option_match = re.match(r"^option\s+([A-Za-z0-9_]+)\s+(.+)$", line)
+            option_match = re.match(r"^\s*option\s+([A-Za-z0-9_]+)\s+(.+)$", line)
             if option_match and current is not None:
                 key = option_match.group(1)
                 value = _unquote(option_match.group(2))
@@ -300,6 +303,28 @@ def _prepare_raw_rules(class_rule_sections, category_marks):
     return raw_rules, errors
 
 
+def _resolve_config_path(config_path):
+    candidates = []
+
+    def add_candidate(path):
+        text = str(path or "").strip()
+        if text and text not in candidates:
+            candidates.append(text)
+
+    add_candidate(PREFERRED_CONFIG_PATH)
+    add_candidate(FALLBACK_CONFIG_PATH)
+    add_candidate(config_path)
+
+    for path in candidates:
+        try:
+            if os.path.isfile(path):
+                return path, candidates
+        except Exception:
+            continue
+
+    return (str(config_path).strip() if str(config_path or "").strip() else PREFERRED_CONFIG_PATH), candidates
+
+
 def run_classifier(config_path=None):
     result = {
         "success": False,
@@ -311,16 +336,28 @@ def run_classifier(config_path=None):
         "details": {},
     }
 
-    cfg = ConfigManager(config_path=config_path)
+    resolved_config_path, config_candidates = _resolve_config_path(config_path)
+    result["details"]["config_path"] = resolved_config_path
+    result["details"]["config_candidates"] = config_candidates
+    result["details"]["firewall_applied"] = False
+
+    cfg = ConfigManager(config_path=resolved_config_path)
     cfg.load_config()
     settings = cfg.get_settings().get("all", {})
-    config_file = cfg.config_path
+    config_file = resolved_config_path
+    result["details"]["config_path_used_by_manager"] = config_file
 
     try:
         sections = _parse_uci_sections(config_file)
     except Exception as exc:
         result["errors"].append(f"failed to parse config: {exc}")
         return result
+    result["details"]["sections_count"] = len(sections)
+    result["details"]["sections_found"] = {
+        "classification": len(_get_all_sections(sections, "classification")),
+        "class_rule": len(_get_all_sections(sections, "class_rule")),
+        "policy": len(_get_all_sections(sections, "policy")),
+    }
 
     classification = _get_first_section(sections, "classification")
     policy = _get_first_section(sections, "policy")
@@ -329,9 +366,11 @@ def run_classifier(config_path=None):
 
     if classification is None:
         result["errors"].append("missing classification section")
+        result["details"]["aborted_before_firewall"] = True
         return result
 
     classification_opts = classification.get("options", {})
+    result["details"]["first_classification_options"] = classification_opts
     try:
         category_marks = _build_category_marks(classification_opts)
     except Exception as exc:
@@ -360,6 +399,7 @@ def run_classifier(config_path=None):
     result["rules_count"] = len(normalized_rules)
 
     fw_result = firewall_manager.apply_rules(normalized_rules)
+    result["details"]["firewall_applied"] = True
     result["backend"] = fw_result.get("backend", "")
     result["details"]["firewall"] = fw_result.get("details", {})
     if result["backend"] == "nft":

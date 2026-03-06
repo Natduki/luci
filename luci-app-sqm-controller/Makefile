@@ -10,7 +10,7 @@ LUCI_TITLE:=SQM Controller Web Interface
 LUCI_DESCRIPTION:=Smart Queue Management (SQM) controller with LuCI web interface
 LUCI_PKGARCH:=all
 
-LUCI_DEPENDS:=+python3 +python3-light +curl +ca-bundle +kmod-ifb \
+LUCI_DEPENDS:=+python3 +python3-light +curl +ca-bundle +kmod-ifb +kmod-sched-matchall \
               +kmod-sched-core +kmod-sched-cake \
               +luci-base +luci-compat \
               +luci-lib-ip +luci-lib-nixio

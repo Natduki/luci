@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 
@@ -52,9 +53,29 @@ def _write_json(path, data):
     os.replace(tmp, path)
 
 
+def _find_tc():
+    tc_path = shutil.which("tc")
+    if tc_path:
+        return tc_path
+
+    for candidate in ("/sbin/tc", "/usr/sbin/tc", "/usr/libexec/tc-bpf"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def _run_tc_class_show(dev):
-    cmd = ["tc", "-s", "class", "show", "dev", dev]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    tc_path = _find_tc()
+    if not tc_path:
+        return {"ok": False, "error": "tc not found", "raw": "", "stdout": "", "stderr": ""}
+
+    cmd = [tc_path, "-s", "class", "show", "dev", dev]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+    except Exception as exc:
+        err = f"tc exec failed: {exc}"
+        return {"ok": False, "error": err, "raw": err, "stdout": "", "stderr": ""}
+
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
     raw = "\n".join(part for part in (stdout, stderr) if part).strip()

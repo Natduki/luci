@@ -54,10 +54,9 @@ class TCManager:
     def clear_tc_rules(self):
         cmds = [
             f"tc qdisc del dev {self.interface} root 2>/dev/null",
-            f"tc qdisc del dev {self.interface} ingress 2>/dev/null",
-            f"tc filter del dev {self.interface} ingress 2>/dev/null",
+            f"tc qdisc del dev {self.interface} handle ffff: ingress 2>/dev/null",
+            f"tc filter del dev {self.interface} parent ffff: 2>/dev/null",
             "tc qdisc del dev ifb0 root 2>/dev/null",
-            "tc filter del dev ifb0 root 2>/dev/null",
         ]
         for cmd in cmds:
             self.run(cmd)
@@ -66,6 +65,37 @@ class TCManager:
         self.run("modprobe ifb 2>/dev/null || true")
         self.run("ip link add ifb0 type ifb 2>/dev/null || true")
         self.run("ip link set ifb0 up")
+
+    def _apply_ingress_redirect(self):
+        matchall_cmds = [
+            f"tc filter add dev {self.interface} parent ffff: protocol ip matchall action mirred egress redirect dev ifb0",
+            f"tc filter add dev {self.interface} parent ffff: protocol ipv6 matchall action mirred egress redirect dev ifb0",
+        ]
+        u32_cmds = [
+            f"tc filter add dev {self.interface} parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0",
+            f"tc filter add dev {self.interface} parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev ifb0",
+        ]
+
+        for cmd in matchall_cmds:
+            result = self.run(cmd)
+            if result.returncode != 0:
+                self.logger.warning(
+                    "matchall redirect unavailable, fallback to u32: %s -> %s",
+                    cmd,
+                    (result.stderr or "").strip(),
+                )
+                self.run(f"tc filter del dev {self.interface} parent ffff: 2>/dev/null")
+                for fallback_cmd in u32_cmds:
+                    fb = self.run(fallback_cmd)
+                    if fb.returncode != 0:
+                        self.logger.error(
+                            "redirect fallback failed: %s -> %s",
+                            fallback_cmd,
+                            (fb.stderr or "").strip(),
+                        )
+                        return False
+                return True
+        return True
 
     def setup_htb(self):
         ecn_flag = "ecn" if self.ecn else "noecn"
@@ -100,8 +130,7 @@ class TCManager:
         if self.download_kbps > 0:
             self.setup_ifb()
             cmds += [
-                f"tc qdisc add dev {self.interface} ingress",
-                f"tc filter add dev {self.interface} parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0",
+                f"tc qdisc add dev {self.interface} handle ffff: ingress",
                 f"tc qdisc add dev ifb0 root handle 2: htb default 20",
                 f"tc class add dev ifb0 parent 2: classid 2:1 htb rate {self.download_kbps}kbit ceil {self.download_kbps}kbit",
                 f"tc class add dev ifb0 parent 2:1 classid 2:20 htb rate {self.download_kbps}kbit ceil {self.download_kbps}kbit",
@@ -123,6 +152,10 @@ class TCManager:
                 ok += 1
             else:
                 self.logger.error("failed: %s -> %s", cmd, result.stderr.strip())
+
+        if ok == len(cmds) and self.download_kbps > 0:
+            if not self._apply_ingress_redirect():
+                return False
 
         return ok == len(cmds)
 
@@ -408,6 +441,7 @@ class TCManager:
             return False
 
         proto_list = ("ip", "ipv6")
+        expected_down_prefs = set()
         for item in normalized:
             up_pref_map = self.UPLOAD_FILTER_PREFS[item["upload_flowid"]]
             down_pref_map = self.DOWNLOAD_FILTER_PREFS[item["download_flowid"]]
@@ -415,6 +449,7 @@ class TCManager:
             for proto in proto_list:
                 up_pref = up_pref_map[proto]
                 down_pref = down_pref_map[proto]
+                expected_down_prefs.add(down_pref)
 
                 if not self._run_delete_optional(
                     f"tc filter del dev {self.interface} parent 1: protocol {proto} pref {up_pref}",
@@ -442,6 +477,21 @@ class TCManager:
                 ok, _ = self._run_checked(cmd, "apply-fwmark-add-download")
                 if not ok:
                     return False
+
+        verify_cmd = "tc filter show dev ifb0 parent 2: 2>/dev/null"
+        verify_result = self.run(verify_cmd)
+        verify_out = (verify_result.stdout or "").strip()
+        if verify_result.returncode != 0:
+            self.logger.error("apply-fwmark-verify failed: %s -> %s", verify_cmd, (verify_result.stderr or "").strip())
+            return False
+        if not verify_out:
+            self.logger.error("apply-fwmark-verify failed: no filters on ifb0 parent 2:")
+            return False
+
+        for pref in sorted(expected_down_prefs):
+            if not re.search(rf"\bpref\s+{pref}\b", verify_out):
+                self.logger.error("apply-fwmark-verify failed: missing ifb0 pref %s", pref)
+                return False
 
         return True
 

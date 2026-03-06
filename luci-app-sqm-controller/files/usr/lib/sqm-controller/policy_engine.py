@@ -353,6 +353,13 @@ def run_once(config_path=None):
     now_ts = int(time.time())
     result = {"success": False, "mode": "", "reason": "", "actions": [], "changed": False}
 
+    def _finalize(payload):
+        if not isinstance(payload, dict):
+            payload = {"success": False, "error": "invalid policy result", "changed": False}
+        if not isinstance(payload.get("actions"), list):
+            payload["actions"] = []
+        return payload
+
     cfg = ConfigManager(config_path=config_path)
     cfg.load_config()
     settings = cfg.get_settings().get("all", {})
@@ -361,19 +368,19 @@ def run_once(config_path=None):
 
     if not policy.get("enabled", False):
         result.update({"success": True, "mode": "disabled", "reason": "policy disabled", "changed": False})
-        return result
+        return _finalize(result)
 
     monitor_current, monitor_err = _collect_monitor_current(iface)
     if monitor_err:
         result["error"] = monitor_err["error"]
         result["details"] = {"raw": monitor_err.get("raw", "")}
-        return result
+        return _finalize(result)
 
     traffic_stats, traffic_err = _collect_traffic_stats()
     if traffic_err:
         result["error"] = traffic_err["error"]
         result["details"] = {"raw": traffic_err.get("raw", "")}
-        return result
+        return _finalize(result)
 
     policy_state = _read_json(POLICY_STATE_FILE, {})
     current_mode = str(policy_state.get("current_mode", "")).strip().lower()
@@ -398,7 +405,7 @@ def run_once(config_path=None):
         if not ok:
             result["error"] = "tc.apply_classes failed"
             result["details"] = {"plan": plan}
-            return result
+            return _finalize(result)
         result["changed"] = True
         result["actions"] = [{"type": "apply_classes", "mode": target_mode, "download_classes": plan["download_classes"]}]
 
@@ -428,7 +435,7 @@ def run_once(config_path=None):
     _append_jsonl_atomic(POLICY_LOG_FILE, log_item)
 
     result["success"] = True
-    return result
+    return _finalize(result)
 
 
 def main():

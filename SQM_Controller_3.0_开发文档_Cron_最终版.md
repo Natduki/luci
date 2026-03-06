@@ -338,9 +338,278 @@ config policy 'policy'
 - UI：
   - traffic/policy/report 页面拉取 JSON 正常，控制台无 JS 错
 
+#### 一、后端命令行验收
+
+先确认 Python 文件没语法问题：
+
+```
+python3 -m py_compile /usr/lib/sqm-controller/main.py
+python3 -m py_compile /usr/lib/sqm-controller/traffic_classifier.py
+python3 -m py_compile /usr/lib/sqm-controller/traffic_stats.py
+python3 -m py_compile /usr/lib/sqm-controller/policy_engine.py
+python3 -m py_compile /usr/lib/sqm-controller/tc_manager.py
+```
+
+确认核心命令都能返回 JSON 或明确结果：
+
+```
+python3 /usr/lib/sqm-controller/main.py --status-json
+python3 /usr/lib/sqm-controller/main.py --get-class-stats --dev ifb0
+python3 /usr/lib/sqm-controller/main.py --get-class-stats --dev iface
+python3 /usr/lib/sqm-controller/main.py --policy-once
+python3 /usr/lib/sqm-controller/main.py --export-report --format json | head -c 300; echo
+python3 /usr/lib/sqm-controller/main.py --export-report --format csv | head -n 5
+```
+
+```
+root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --status-json
+{"service_status": "running", "pid": "N/A(no resident process)", "tc_state": "applied", "ecn_state": "enabled", "tc_wan": "qdisc htb 1: root refcnt 2 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000\nqdisc fq_codel 10: parent 1:10 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc ingress ffff: parent ffff:fff1 ---------------- ", "tc_ifb": "qdisc htb 2: root refcnt 2 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 32\nqdisc fq_codel 20: parent 2:20 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 "}
+root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --get-class-stats --dev ifb0
+{"success": true, "time": 1772814866, "dt": 566.0, "device": "ifb0", "classes": {"other": {"classid": "2:20", "bytes": 747157602, "packets": 633249, "kbps": 259.54, "pct": 100.0}, "gaming": {"classid": "2:21", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}, "streaming": {"classid": "2:22", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}, "bulk": {"classid": "2:23", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}}, "total_kbps": 259.54}
+root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --get-class-stats --dev iface
+{"success": true, "time": 1772814866, "dt": 589.0, "device": "eth1", "classes": {"other": {"classid": "1:10", "bytes": 95117520, "packets": 574220, "kbps": 28.34, "pct": 100.0}, "gaming": {"classid": "1:11", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}, "streaming": {"classid": "1:12", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}, "bulk": {"classid": "1:13", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}}, "total_kbps": 28.34}
+root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --policy-once
+{"success": true, "mode": "gaming", "reason": "severe congestion", "actions": [], "changed": false}
+root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --export-report --format json | head -c 300; echo
+{"success": true, "format": "json", "count": 57, "entries": [{"time": 1772804036, "inputs": {"policy": {"enabled": true, "mode": "auto", "latency_high_ms": 80, "loss_high_pct": 2, "bulk_cap_pct": 60, "gaming_floor_pct": 15, "streaming_floor_pct": 25, "cooldown_min": 2}, "monitor": {"latency": 223.44Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
+BrokenPipeError: [Errno 32] Broken pipe
+
+root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --export-report --format csv | head -n 5
+time,decision.mode,decision.reason,inputs.monitor.latency,inputs.monitor.loss,inputs.traffic_stats.total_kbps,changed
+1772804036,gaming,severe congestion,223.44,0.0,916.25,True
+1772804037,gaming,severe congestion,223.44,0.0,40.65,False
+1772804039,gaming,severe congestion,223.44,0.0,10.7,False
+1772804046,gaming,severe congestion,223.44,0.0,2.03,False
+
+```
+
+分类器链路：
+
+```
+python3 /usr/lib/sqm-controller/main.py --apply-classifier
+tc filter show dev ifb0 parent 2: | sed -n '1,120p'
+nft list table inet sqm_fw | sed -n '1,120p'
+```
+
+```
+root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --apply-classifier
+{"success": false, "rules_count": 0, "backend": "", "marks": {"category_marks": {}, "mark_to_classid": {}}, "errors": ["missing classification section"], "warnings": ["IPv4 download classification is guaranteed in v3.0 first release; IPv6 download classification requires setup_htb() redirect enhancement."], "details": {"config_path": "/etc/config/sqm_controller", "config_candidates": ["/etc/config/sqm_controller", "/etc/config/sqm-controller"], "firewall_applied": false, "config_path_used_by_manager": "/etc/config/sqm_controller", "sections_count": 2, "sections_found": {"classification": 0, "class_rule": 0, "policy": 0}, "policy": {}, "aborted_before_firewall": true}}
+root@OpenWrt:~# tc filter show dev ifb0 parent 2: | sed -n '1,120p'
+root@OpenWrt:~# nft list table inet sqm_fw | sed -n '1,120p'
+Error: No such file or directory
+list table inet sqm_fw
+                ^^^^^^
+
+```
+
+清理分类器链路：
+
+```
+python3 /usr/lib/sqm-controller/main.py --clear-classifier
+tc filter show dev ifb0 parent 2: | sed -n '1,120p'
+nft list table inet sqm_fw 2>/dev/null || echo "sqm_fw removed or empty"
+```
+
+```
+root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --clear-classifier
+{"success": false, "firewall": {"success": true, "backend": "nft", "error": "", "details": {"commands": [{"cmd": "/usr/sbin/nft delete table inet sqm_fw", "rc": 1, "stdout": "", "stderr": "Error: Could not process rule: No such file or directory\ndelete table inet sqm_fw\n                  ^^^^^^"}], "note": "table not found"}}, "tc": {"success": false, "error": "clear_classifier_tc failed"}, "errors": ["tc: clear_classifier_tc failed"]}
+root@OpenWrt:~# tc filter show dev ifb0 parent 2: | sed -n '1,120p'
+root@OpenWrt:~# nft list table inet sqm_fw 2>/dev/null || echo "sqm_fw removed or empty"
+sqm_fw removed or empty
+
+```
+
+
+
+#### 二、traffic_stats 专项验收
+
+验证 LuCI 环境下也能跑，不再依赖 PATH：
+
+```
+env -i PATH=/usr/bin:/bin python3 /usr/lib/sqm-controller/traffic_stats.py --dev ifb0
+env -i PATH=/usr/bin:/bin python3 /usr/lib/sqm-controller/traffic_stats.py --dev eth1
+```
+
+连续跑两次，确认第二次有 `dt` 和速率：
+
+```
+python3 /usr/lib/sqm-controller/traffic_stats.py --dev ifb0
+sleep 3
+python3 /usr/lib/sqm-controller/traffic_stats.py --dev ifb0
+```
+
+检查 state 文件：
+
+```
+ls -l /tmp/sqm_traffic_stats_state_ifb0.json
+cat /tmp/sqm_traffic_stats_state_ifb0.json
+```
+
+#### 三、policy engine 专项验收
+
+先跑一次策略：
+
+```
+python3 /usr/lib/sqm-controller/main.py --policy-once
+```
+
+看 state 和日志：
+
+```
+cat /tmp/sqm_policy_state.json
+tail -n 5 /var/log/sqm_policy.jsonl
+```
+
+确认 actions 一直是数组：
+
+```
+python3 - <<'PY'
+import json, subprocess
+out = subprocess.check_output(["python3","/usr/lib/sqm-controller/main.py","--policy-once"], text=True)
+d = json.loads(out)
+print(d)
+assert isinstance(d.get("actions"), list)
+print("OK")
+PY
+```
+
+#### 四、LuCI 接口验收
+
+用已登录 cookie 测接口，确认都是 JSON。
+
+先准备 cookie 后测：
+
+```
+curl -i -s --cookie 'sysauth_http=你的值' \
+  'http://127.0.0.1/cgi-bin/luci/admin/services/sqm_controller/policy_once' \
+  | head -n 20
+```
+
+策略状态接口：
+
+```
+curl -s --cookie 'sysauth_http=你的值' \
+  'http://127.0.0.1/cgi-bin/luci/admin/services/sqm_controller/get_policy_state'
+```
+
+分类流量统计接口：
+
+```
+curl -s --cookie 'sysauth_http=你的值' \
+  'http://127.0.0.1/cgi-bin/luci/admin/services/sqm_controller/get_class_stats?dev=ifb0'
+```
+
+报告导出接口：
+
+```
+curl -s --cookie 'sysauth_http=你的值' \
+  'http://127.0.0.1/cgi-bin/luci/admin/services/sqm_controller/export_report?format=json' \
+  | head -c 300; echo
+```
+
+#### 五、LuCI 页面验收
+
+浏览器里重点看这三页：
+
+##### 1. 分类流量统计
+
+检查：
+
+- 能自动刷新
+- `device` 切到 `ifb0` 和 `iface` 都不报错
+- 不再出现 `[Errno 2] No such file or directory: 'tc'`
+- `kbps / pct / bytes / packets` 有值
+
+##### 2. 策略引擎
+
+检查：
+
+- 页面能加载
+- “执行一次策略”按钮正常
+- “已加载状态接口快照”提示正常
+- `mode / reason / last_change_ts` 正常显示
+- 最近一次返回里 `actions` 是 `[]` 不是 `{}`
+
+##### 3. 策略报告
+
+检查：
+
+- 预览按钮正常
+- 表格列顺序是 `time / mode / reason / changed`
+- 导出 CSV 正常下载
+- 导出 JSON 正常打开/下载
+
+#### 六、服务与启动项验收
+
+检查 init 脚本是否正常：
+
+```
+/etc/init.d/sqm-controller stop
+/etc/init.d/sqm-controller start
+/etc/init.d/sqm-controller restart
+```
+
+如果启用了 policy：
+
+```
+grep -n 'sqm-controller-policy' /etc/crontabs/root
+```
+
+停服务后应移除：
+
+```
+/etc/init.d/sqm-controller stop
+grep -n 'sqm-controller-policy' /etc/crontabs/root || echo "cron removed"
+```
+
+再启动恢复：
+
+```
+/etc/init.d/sqm-controller start
+grep -n 'sqm-controller-policy' /etc/crontabs/root
+```
+
+#### 七、重启后验收
+
+重启后再检查：
+
+```
+reboot
+```
+
+重启起来后确认：
+
+```
+opkg info luci-app-sqm-controller | sed -n '1,20p'
+/etc/init.d/sqm-controller status 2>/dev/null || true
+python3 /usr/lib/sqm-controller/main.py --status-json
+python3 /usr/lib/sqm-controller/main.py --policy-once
+ls -l /tmp/sqm_policy_state.json
+```
+
+然后浏览器重新打开三页，确认菜单、页面、按钮都还在。
+
+#### 八、打包内容验收
+
+在 SDK/源码目录确认新文件都进包了：
+
+- `files/usr/lib/sqm-controller/traffic_classifier.py`
+- `files/usr/lib/sqm-controller/traffic_stats.py`
+- `files/usr/lib/sqm-controller/policy_engine.py`
+- `luasrc/view/sqm_controller/traffic.htm`
+- `luasrc/view/sqm_controller/policy.htm`
+- `luasrc/view/sqm_controller/report.htm`
+
+以及 Makefile 安装项、依赖项正确。
+
+#### 九、上线前最后一条建议
+
+在你重新打 ipk 之前，最好再跑一遍 BOM 检查和语法检查，避免“Windows 改完上传后首字符丢失”这类问题再出现。
+
 ---
 
 ## 11. 版本管理建议
 - `v2.0.0` tag 固定为 2.0 基线
 - `v3` 分支开发 3.0
 - 每完成一个 Step 做一次 commit（便于回退和论文过程记录）
+

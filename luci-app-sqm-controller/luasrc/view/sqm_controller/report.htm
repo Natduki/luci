@@ -54,7 +54,7 @@
 
 <script type="text/javascript">
 (function() {
-  var EXPORT_URL = "<%=luci.dispatcher.build_url(\"admin/services/sqm_controller/export_report\")%>";
+  var EXPORT_URL = "<%=luci.dispatcher.build_url("admin/services/sqm_controller/export_report")%>";
 
   function el(id) { return document.getElementById(id); }
   function qUrl(fmt) { return EXPORT_URL + "?format=" + encodeURIComponent(fmt); }
@@ -82,7 +82,7 @@
     tr.appendChild(td);
     tb.appendChild(tr);
   }
-  function row(mode, reason, changed, timeText) {
+  function row(timeText, mode, reason, changed) {
     var tr = document.createElement("tr");
     [timeText, mode, reason, changed].forEach(function(v) {
       var td = document.createElement("td");

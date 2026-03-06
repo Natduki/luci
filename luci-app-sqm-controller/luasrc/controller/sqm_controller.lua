@@ -9,6 +9,7 @@ local util = require "luci.util"
 local APP_PY = "/usr/lib/sqm-controller/main.py"
 local LOGF = "/var/log/sqm_controller.log"
 local CONF = "/etc/config/sqm_controller"
+local POLICY_STATE_FILE = "/tmp/sqm_policy_state.json"
 
 local function exec_with_rc(cmd)
     local marker = "__SQM_RC__:"
@@ -45,7 +46,10 @@ function index()
     entry({"admin", "services", "sqm_controller", "wizard"}, template("sqm_controller/wizard"), _("配置向导"), 12)
     entry({"admin", "services", "sqm_controller", "status"}, template("sqm_controller/status"), _("状态监控"), 20)
     entry({"admin", "services", "sqm_controller", "monitor"}, template("sqm_controller/monitor"), _("实时监控"), 23)
+    entry({"admin", "services", "sqm_controller", "traffic"}, template("sqm_controller/traffic"), _("分类流量统计"), 24)
     entry({"admin", "services", "sqm_controller", "templates"}, template("sqm_controller/templates"), _("场景模板"), 25)
+    entry({"admin", "services", "sqm_controller", "policy"}, template("sqm_controller/policy"), _("策略引擎"), 26)
+    entry({"admin", "services", "sqm_controller", "report"}, template("sqm_controller/report"), _("策略报告"), 27)
     entry({"admin", "services", "sqm_controller", "logs"}, template("sqm_controller/logs"), _("系统日志"), 30)
     entry({"admin", "services", "sqm_controller", "help"}, template("sqm_controller/help"), _("帮助文档"), 40)
 
@@ -71,6 +75,7 @@ function index()
     entry({"admin", "services", "sqm_controller", "clear_classifier"}, call("action_clear_classifier")).leaf = true
     entry({"admin", "services", "sqm_controller", "get_class_stats"}, call("action_get_class_stats")).leaf = true
     entry({"admin", "services", "sqm_controller", "policy_once"}, call("action_policy_once")).leaf = true
+    entry({"admin", "services", "sqm_controller", "get_policy_state"}, call("action_get_policy_state")).leaf = true
     entry({"admin", "services", "sqm_controller", "export_report"}, call("action_export_report")).leaf = true
 end
 
@@ -364,7 +369,81 @@ function action_policy_once()
     local data = exec_json("python3 " .. APP_PY .. " --policy-once", {
         error = "policy_once failed"
     })
-    http.write_json(data)
+
+    if type(data) ~= "table" then
+        data = {
+            success = false,
+            error = "policy_once failed"
+        }
+    end
+
+    local normalized_actions = {}
+    if type(data.actions) == "table" then
+        local seq_len = #data.actions
+        if seq_len > 0 then
+            for i = 1, seq_len do
+                table.insert(normalized_actions, data.actions[i])
+            end
+        else
+            local numeric_keys = {}
+            for key, _ in pairs(data.actions) do
+                if type(key) == "number" and key >= 1 and key == math.floor(key) then
+                    table.insert(numeric_keys, key)
+                end
+            end
+            table.sort(numeric_keys)
+            for _, key in ipairs(numeric_keys) do
+                table.insert(normalized_actions, data.actions[key])
+            end
+        end
+    end
+    data.actions = normalized_actions
+
+    if type(data.changed) ~= "boolean" then
+        data.changed = false
+    end
+
+    local payload = jsonc.stringify(data) or "{}"
+    if #normalized_actions == 0 then
+        payload = payload:gsub('"actions"%s*:%s*{}', '"actions":[]', 1)
+    end
+
+    http.prepare_content("application/json")
+    http.header("Content-Type", "application/json; charset=utf-8")
+    http.write(payload)
+end
+
+function action_get_policy_state()
+    http.prepare_content("application/json")
+    http.header("Content-Type", "application/json; charset=utf-8")
+
+    if not fs.access(POLICY_STATE_FILE) then
+        http.write('{"success":true,"empty":true,"note":"no state yet","current_mode":"","last_change_ts":0,"last_run_ts":0,"actions":[]}')
+        return
+    end
+
+    local ok_read, raw = pcall(fs.readfile, POLICY_STATE_FILE)
+    if not ok_read then
+        http.write_json({
+            success = false,
+            error = "invalid policy state json",
+            raw = ""
+        })
+        return
+    end
+
+    raw = raw or ""
+    local ok_parse, parsed = pcall(jsonc.parse, raw)
+    if not ok_parse or type(parsed) ~= "table" then
+        http.write_json({
+            success = false,
+            error = "invalid policy state json",
+            raw = string.sub(raw, 1, 4096)
+        })
+        return
+    end
+
+    http.write(raw)
 end
 
 function action_export_report()
