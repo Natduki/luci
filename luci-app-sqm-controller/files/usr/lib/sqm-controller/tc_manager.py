@@ -228,6 +228,9 @@ class TCManager:
         )
         if any(marker in merged for marker in not_found_markers):
             return True
+        if not output and not error:
+            self.logger.warning("%s empty non-zero delete treated as optional success: %s", stage, cmd)
+            return True
 
         self._set_last_error_details(
             stage=stage,
