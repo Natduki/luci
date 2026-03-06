@@ -1,4 +1,4 @@
-﻿SQM Controller 是一个基于 OpenWrt 的智能队列管理（Smart Queue Management, SQM）控制器，
+SQM Controller 是一个基于 OpenWrt 的智能队列管理（Smart Queue Management, SQM）控制器，
 提供图形化 LuCI Web 界面，用于配置和管理流量整形与队列调度算法。
 
 本应用支持 fq_codel 与 cake 两种常用队列算法，可用于缓解网络缓冲膨胀（Bufferbloat），

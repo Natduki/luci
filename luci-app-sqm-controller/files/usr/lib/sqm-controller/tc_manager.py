@@ -46,10 +46,14 @@ class TCManager:
         self.algorithm = str(config.get("queue_algorithm", "fq_codel")).lower()
         self.ecn = _to_bool(config.get("ecn", True), default=True)
         self.logger = logging.getLogger(__name__)
+        self.last_error_details = {}
 
     def run(self, cmd):
         self.logger.debug(cmd)
         return subprocess.run(cmd, shell=True, capture_output=True, text=True)
+
+    def _set_last_error_details(self, **kwargs):
+        self.last_error_details = {key: value for key, value in kwargs.items() if value is not None}
 
     def clear_tc_rules(self):
         cmds = [
@@ -192,6 +196,13 @@ class TCManager:
     def _run_checked(self, cmd, stage):
         result = self.run(cmd)
         if result.returncode != 0:
+            self._set_last_error_details(
+                stage=stage,
+                cmd=cmd,
+                returncode=result.returncode,
+                stdout=(result.stdout or "").strip(),
+                stderr=(result.stderr or "").strip(),
+            )
             self.logger.error("%s failed: %s -> %s", stage, cmd, result.stderr.strip())
             return False, result
         return True, result
@@ -218,6 +229,13 @@ class TCManager:
         if any(marker in merged for marker in not_found_markers):
             return True
 
+        self._set_last_error_details(
+            stage=stage,
+            cmd=cmd,
+            returncode=result.returncode,
+            stdout=output,
+            stderr=error,
+        )
         self.logger.error("%s failed: %s -> %s", stage, cmd, error or output)
         return False
 
@@ -361,6 +379,7 @@ class TCManager:
         return True
 
     def apply_classes(self, plan):
+        self.last_error_details = {}
         try:
             normalized = self._normalize_class_plan(plan)
         except Exception as exc:
@@ -430,6 +449,7 @@ class TCManager:
         return True
 
     def apply_fwmark_filters(self, fw_map):
+        self.last_error_details = {}
         try:
             normalized = self._normalize_fwmark_map(fw_map)
         except Exception as exc:
@@ -482,20 +502,44 @@ class TCManager:
         verify_result = self.run(verify_cmd)
         verify_out = (verify_result.stdout or "").strip()
         if verify_result.returncode != 0:
+            self._set_last_error_details(
+                stage="apply-fwmark-verify",
+                verify_cmd=verify_cmd,
+                verify_returncode=verify_result.returncode,
+                verify_stdout=(verify_result.stdout or "").strip(),
+                verify_stderr=(verify_result.stderr or "").strip(),
+                expected_down_prefs=sorted(expected_down_prefs),
+            )
             self.logger.error("apply-fwmark-verify failed: %s -> %s", verify_cmd, (verify_result.stderr or "").strip())
             return False
         if not verify_out:
+            self._set_last_error_details(
+                stage="apply-fwmark-verify",
+                verify_cmd=verify_cmd,
+                verify_returncode=verify_result.returncode,
+                verify_stdout=verify_out,
+                verify_stderr=(verify_result.stderr or "").strip(),
+                expected_down_prefs=sorted(expected_down_prefs),
+            )
             self.logger.error("apply-fwmark-verify failed: no filters on ifb0 parent 2:")
             return False
 
         for pref in sorted(expected_down_prefs):
             if not re.search(rf"\bpref\s+{pref}\b", verify_out):
+                self._set_last_error_details(
+                    stage="apply-fwmark-verify-missing-pref",
+                    missing_pref=pref,
+                    verify_cmd=verify_cmd,
+                    verify_stdout=verify_out,
+                    expected_down_prefs=sorted(expected_down_prefs),
+                )
                 self.logger.error("apply-fwmark-verify failed: missing ifb0 pref %s", pref)
                 return False
 
         return True
 
     def clear_classifier_tc(self):
+        self.last_error_details = {}
         ok_all = True
 
         for pref_map in self.UPLOAD_FILTER_PREFS.values():

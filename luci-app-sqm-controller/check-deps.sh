@@ -1,4 +1,4 @@
-﻿#!/bin/sh
+#!/bin/sh
 
 check_dependency() {
     if ! opkg list-installed | grep -q "^$1"; then

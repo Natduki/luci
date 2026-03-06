@@ -16,17 +16,17 @@
 </style>
 
 <div class="cbi-map sqm-wrap">
-  <h2 class="sqm-title"><%:策略报告导出%></h2>
+  <h2 class="sqm-title">策略报告导出</h2>
 
   <div class="sqm-topbar">
-    <button id="btn-csv" class="cbi-button cbi-button-apply"><%:导出 CSV%></button>
-    <button id="btn-json" class="cbi-button"><%:导出 JSON%></button>
-    <button id="btn-preview" class="cbi-button"><%:预览最近记录%></button>
+    <button id="btn-csv" class="cbi-button cbi-button-apply">导出 CSV</button>
+    <button id="btn-json" class="cbi-button">导出 JSON</button>
+    <button id="btn-preview" class="cbi-button">预览最近记录</button>
     <span id="preview-badge" class="sqm-badge warn">--</span>
   </div>
 
   <div class="sqm-card">
-    <div class="sqm-note">preview_count: <span id="preview-count">--</span></div>
+    <div class="sqm-note">预览条数: <span id="preview-count">--</span></div>
     <div class="sqm-note" id="preview-msg">点击“预览最近记录”加载数据</div>
   </div>
 
@@ -34,10 +34,10 @@
     <table class="sqm-table">
       <thead>
         <tr>
-          <th>time</th>
-          <th>mode</th>
-          <th>reason</th>
-          <th>changed</th>
+          <th>时间</th>
+          <th>策略模式</th>
+          <th>判定原因</th>
+          <th>是否调整</th>
         </tr>
       </thead>
       <tbody id="preview-tbody">
@@ -47,14 +47,27 @@
   </div>
 
   <div class="sqm-card">
-    <div class="sqm-note">raw preview</div>
+    <div class="sqm-note">原始预览</div>
     <pre id="raw-pre" class="sqm-pre">--</pre>
   </div>
 </div>
 
 <script type="text/javascript">
 (function() {
-  var EXPORT_URL = "<%=luci.dispatcher.build_url("admin/services/sqm_controller/export_report")%>";
+  var EXPORT_URL = '<%=luci.dispatcher.build_url("admin/services/sqm_controller/export_report")%>';
+  var MODE_LABELS = {
+    gaming: "游戏优先",
+    streaming: "流媒体优先",
+    bulk: "批量传输优先",
+    other: "默认",
+    disabled: "已禁用",
+    auto: "自动"
+  };
+  var REASON_LABELS = {
+    "severe congestion": "严重拥塞",
+    "policy disabled": "策略已禁用",
+    "no state yet": "暂无状态"
+  };
 
   function el(id) { return document.getElementById(id); }
   function qUrl(fmt) { return EXPORT_URL + "?format=" + encodeURIComponent(fmt); }
@@ -66,6 +79,14 @@
   function safeText(v) {
     if (v === null || v === undefined || v === "") return "--";
     return String(v);
+  }
+  function displayMode(v) {
+    var text = safeText(v);
+    return MODE_LABELS[text] || text;
+  }
+  function displayReason(v) {
+    var text = safeText(v);
+    return REASON_LABELS[text] || text;
   }
   function fmtTs(v) {
     var n = Number(v);
@@ -100,7 +121,7 @@
     return null;
   }
   function toBoolText(v) {
-    if (typeof v === "boolean") return v ? "true" : "false";
+    if (typeof v === "boolean") return v ? "是" : "否";
     return "--";
   }
   function preview() {
@@ -136,19 +157,19 @@
             var decision = (item.decision && typeof item.decision === "object") ? item.decision : {};
             tb.appendChild(row(
               safeText(fmtTs(item.time)),
-              safeText(decision.mode),
-              safeText(decision.reason),
+              displayMode(decision.mode),
+              displayReason(decision.reason),
               toBoolText(item.changed)
             ));
           });
         }
 
-        setBadge("ok", "ok");
+        setBadge("ok", "正常");
         el("preview-msg").textContent = "预览成功（最多展示前 5 条）";
       })
       .catch(function(err) {
         clearRows("无法预览，请下载查看");
-        setBadge("warn", "warn");
+        setBadge("warn", "警告");
         el("preview-count").textContent = "--";
         el("preview-msg").textContent = (err && err.message) ? err.message : "预览失败";
       });
@@ -162,7 +183,7 @@
   });
   el("btn-preview").addEventListener("click", preview);
 
-  setBadge("warn", "idle");
+  setBadge("warn", "空闲");
 })();
 </script>
 

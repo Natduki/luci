@@ -1,4 +1,4 @@
-﻿module("luci.controller.sqm_controller", package.seeall)
+module("luci.controller.sqm_controller", package.seeall)
 
 local fs = require "nixio.fs"
 local http = require "luci.http"

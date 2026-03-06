@@ -419,10 +419,12 @@ def run_classifier(config_path=None):
 
     if not tc.apply_classes(tc_plan):
         result["errors"].append("tc apply_classes failed")
+        result["details"]["tc"] = dict(tc.last_error_details or {})
         return result
 
     if not tc.apply_fwmark_filters(fw_map):
         result["errors"].append("tc apply_fwmark_filters failed")
+        result["details"]["tc"] = dict(tc.last_error_details or {})
         return result
 
     result["details"]["plan"] = tc_plan

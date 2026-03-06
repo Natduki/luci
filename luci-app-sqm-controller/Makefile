@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-sqm-controller
 PKG_VERSION:=3.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=vaidurya.zws@qq.com
 
@@ -10,7 +10,7 @@ LUCI_TITLE:=SQM Controller Web Interface
 LUCI_DESCRIPTION:=Smart Queue Management (SQM) controller with LuCI web interface
 LUCI_PKGARCH:=all
 
-LUCI_DEPENDS:=+python3 +python3-light +curl +ca-bundle +kmod-ifb +kmod-sched-matchall \
+LUCI_DEPENDS:=+python3 +python3-light +curl +ca-bundle +kmod-ifb \
               +kmod-sched-core +kmod-sched-cake \
               +luci-base +luci-compat \
               +luci-lib-ip +luci-lib-nixio

@@ -18,50 +18,50 @@
 </style>
 
 <div class="cbi-map sqm-wrap">
-  <h2 class="sqm-title"><%:分类流量统计%></h2>
+  <h2 class="sqm-title">分类流量统计</h2>
 
   <div class="sqm-topbar">
     <span id="status-badge" class="sqm-badge">--</span>
-    <label><%:设备%>:
+    <label>设备:
       <select id="dev-select">
         <option value="ifb0">ifb0</option>
-        <option value="iface">iface</option>
+        <option value="iface">接口</option>
       </select>
     </label>
-    <label><input id="auto-refresh" type="checkbox" checked> <%:自动刷新(3秒)%></label>
-    <button class="cbi-button cbi-button-action" id="btn-refresh"><%:立即刷新%></button>
+    <label><input id="auto-refresh" type="checkbox" checked> 自动刷新(3秒)</label>
+    <button class="cbi-button cbi-button-action" id="btn-refresh">立即刷新</button>
   </div>
 
   <div class="sqm-card">
-    <div class="sqm-k"><%:总速率 / 采样间隔%></div>
+    <div class="sqm-k">总速率 / 采样间隔</div>
     <div class="sqm-v"><span id="total-kbps">--</span> kbps</div>
-    <div class="sqm-sub">dt: <span id="dt-val">--</span>s | device: <span id="dev-val">--</span> | time: <span id="time-val">--</span></div>
+    <div class="sqm-sub">dt: <span id="dt-val">--</span>s | 设备: <span id="dev-val">--</span> | 时间: <span id="time-val">--</span></div>
     <div id="error-box" class="sqm-sub sqm-err"></div>
   </div>
 
   <div class="sqm-grid">
     <div class="sqm-card">
-      <div class="sqm-k">other</div>
+      <div class="sqm-k">其他流量</div>
       <div class="sqm-v"><span id="kbps-other">--</span> kbps</div>
-      <div class="sqm-sub">pct: <span id="pct-other">--</span>%</div>
+      <div class="sqm-sub">占比: <span id="pct-other">--</span>%</div>
       <div class="sqm-sub">classid: <span id="classid-other">--</span> | bytes: <span id="bytes-other">--</span> | packets: <span id="packets-other">--</span></div>
     </div>
     <div class="sqm-card">
-      <div class="sqm-k">gaming</div>
+      <div class="sqm-k">游戏流量</div>
       <div class="sqm-v"><span id="kbps-gaming">--</span> kbps</div>
-      <div class="sqm-sub">pct: <span id="pct-gaming">--</span>%</div>
+      <div class="sqm-sub">占比: <span id="pct-gaming">--</span>%</div>
       <div class="sqm-sub">classid: <span id="classid-gaming">--</span> | bytes: <span id="bytes-gaming">--</span> | packets: <span id="packets-gaming">--</span></div>
     </div>
     <div class="sqm-card">
-      <div class="sqm-k">streaming</div>
+      <div class="sqm-k">流媒体</div>
       <div class="sqm-v"><span id="kbps-streaming">--</span> kbps</div>
-      <div class="sqm-sub">pct: <span id="pct-streaming">--</span>%</div>
+      <div class="sqm-sub">占比: <span id="pct-streaming">--</span>%</div>
       <div class="sqm-sub">classid: <span id="classid-streaming">--</span> | bytes: <span id="bytes-streaming">--</span> | packets: <span id="packets-streaming">--</span></div>
     </div>
     <div class="sqm-card">
-      <div class="sqm-k">bulk</div>
+      <div class="sqm-k">批量流量</div>
       <div class="sqm-v"><span id="kbps-bulk">--</span> kbps</div>
-      <div class="sqm-sub">pct: <span id="pct-bulk">--</span>%</div>
+      <div class="sqm-sub">占比: <span id="pct-bulk">--</span>%</div>
       <div class="sqm-sub">classid: <span id="classid-bulk">--</span> | bytes: <span id="bytes-bulk">--</span> | packets: <span id="packets-bulk">--</span></div>
     </div>
   </div>
@@ -69,7 +69,8 @@
 
 <script type="text/javascript">
 (function() {
-  var STATS_URL = "<%=luci.dispatcher.build_url("admin/services/sqm_controller/get_class_stats")%>";
+  var STATS_URL = '<%=luci.dispatcher.build_url("admin/services/sqm_controller/get_class_stats")%>';
+  var DEVICE_LABELS = { iface: "接口", ifb0: "ifb0" };
   var timer = null;
 
   function el(id) { return document.getElementById(id); }
@@ -87,6 +88,10 @@
     if (!isFinite(n) || n <= 0) return "--";
     try { return new Date(n * 1000).toLocaleString(); } catch (e) { return "--"; }
   }
+  function deviceText(dev) {
+    if (typeof dev !== "string" || !dev) return "--";
+    return DEVICE_LABELS[dev] || dev;
+  }
   function setBadge(kind, text) {
     var node = el("status-badge");
     node.className = "sqm-badge " + kind;
@@ -97,7 +102,7 @@
   }
   function normalizeClass(data) {
     if (!data || typeof data !== "object") {
-      return { classid:"--", kbps:0, pct:0, bytes:0, packets:0 };
+      return { classid: "--", kbps: 0, pct: 0, bytes: 0, packets: 0 };
     }
     return {
       classid: (typeof data.classid === "string" && data.classid) ? data.classid : "--",
@@ -147,23 +152,23 @@
         });
         el("total-kbps").textContent = fmt(total, 2);
         el("dt-val").textContent = fmt(dt, 3);
-        el("dev-val").textContent = (typeof data.device === "string" && data.device) ? data.device : dev;
+        el("dev-val").textContent = deviceText((typeof data.device === "string" && data.device) ? data.device : dev);
         el("time-val").textContent = tsText(data.time);
 
         if (!ok) {
           err = data.error || data.output || "后端返回 success=false";
-          setBadge("bad", "bad");
+          setBadge("bad", "失败");
           showError(String(err));
           return;
         }
 
         showError("");
-        if (total > 0) setBadge("ok", "ok");
-        else setBadge("warn", "warn");
+        if (total > 0) setBadge("ok", "正常");
+        else setBadge("warn", "警告");
       })
       .catch(function(err) {
         clearDisplay();
-        setBadge("bad", "bad");
+        setBadge("bad", "失败");
         showError("请求失败: " + (err && err.message ? err.message : String(err)));
       });
   }
@@ -182,7 +187,7 @@
   el("dev-select").addEventListener("change", loadStats);
 
   clearDisplay();
-  setBadge("warn", "warn");
+  setBadge("warn", "警告");
   loadStats();
   syncTimer();
 })();

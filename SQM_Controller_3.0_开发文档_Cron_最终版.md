@@ -361,45 +361,12 @@ python3 /usr/lib/sqm-controller/main.py --export-report --format json | head -c 
 python3 /usr/lib/sqm-controller/main.py --export-report --format csv | head -n 5
 ```
 
-```
-root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --status-json
-{"service_status": "running", "pid": "N/A(no resident process)", "tc_state": "applied", "ecn_state": "enabled", "tc_wan": "qdisc htb 1: root refcnt 2 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000\nqdisc fq_codel 10: parent 1:10 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc ingress ffff: parent ffff:fff1 ---------------- ", "tc_ifb": "qdisc htb 2: root refcnt 2 r2q 10 default 0x20 direct_packets_stat 0 direct_qlen 32\nqdisc fq_codel 20: parent 2:20 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 "}
-root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --get-class-stats --dev ifb0
-{"success": true, "time": 1772814866, "dt": 566.0, "device": "ifb0", "classes": {"other": {"classid": "2:20", "bytes": 747157602, "packets": 633249, "kbps": 259.54, "pct": 100.0}, "gaming": {"classid": "2:21", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}, "streaming": {"classid": "2:22", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}, "bulk": {"classid": "2:23", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}}, "total_kbps": 259.54}
-root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --get-class-stats --dev iface
-{"success": true, "time": 1772814866, "dt": 589.0, "device": "eth1", "classes": {"other": {"classid": "1:10", "bytes": 95117520, "packets": 574220, "kbps": 28.34, "pct": 100.0}, "gaming": {"classid": "1:11", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}, "streaming": {"classid": "1:12", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}, "bulk": {"classid": "1:13", "bytes": 0, "packets": 0, "kbps": 0.0, "pct": 0.0}}, "total_kbps": 28.34}
-root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --policy-once
-{"success": true, "mode": "gaming", "reason": "severe congestion", "actions": [], "changed": false}
-root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --export-report --format json | head -c 300; echo
-{"success": true, "format": "json", "count": 57, "entries": [{"time": 1772804036, "inputs": {"policy": {"enabled": true, "mode": "auto", "latency_high_ms": 80, "loss_high_pct": 2, "bulk_cap_pct": 60, "gaming_floor_pct": 15, "streaming_floor_pct": 25, "cooldown_min": 2}, "monitor": {"latency": 223.44Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
-BrokenPipeError: [Errno 32] Broken pipe
-
-root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --export-report --format csv | head -n 5
-time,decision.mode,decision.reason,inputs.monitor.latency,inputs.monitor.loss,inputs.traffic_stats.total_kbps,changed
-1772804036,gaming,severe congestion,223.44,0.0,916.25,True
-1772804037,gaming,severe congestion,223.44,0.0,40.65,False
-1772804039,gaming,severe congestion,223.44,0.0,10.7,False
-1772804046,gaming,severe congestion,223.44,0.0,2.03,False
-
-```
-
 分类器链路：
 
 ```
 python3 /usr/lib/sqm-controller/main.py --apply-classifier
 tc filter show dev ifb0 parent 2: | sed -n '1,120p'
 nft list table inet sqm_fw | sed -n '1,120p'
-```
-
-```
-root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --apply-classifier
-{"success": false, "rules_count": 0, "backend": "", "marks": {"category_marks": {}, "mark_to_classid": {}}, "errors": ["missing classification section"], "warnings": ["IPv4 download classification is guaranteed in v3.0 first release; IPv6 download classification requires setup_htb() redirect enhancement."], "details": {"config_path": "/etc/config/sqm_controller", "config_candidates": ["/etc/config/sqm_controller", "/etc/config/sqm-controller"], "firewall_applied": false, "config_path_used_by_manager": "/etc/config/sqm_controller", "sections_count": 2, "sections_found": {"classification": 0, "class_rule": 0, "policy": 0}, "policy": {}, "aborted_before_firewall": true}}
-root@OpenWrt:~# tc filter show dev ifb0 parent 2: | sed -n '1,120p'
-root@OpenWrt:~# nft list table inet sqm_fw | sed -n '1,120p'
-Error: No such file or directory
-list table inet sqm_fw
-                ^^^^^^
-
 ```
 
 清理分类器链路：
@@ -409,17 +376,6 @@ python3 /usr/lib/sqm-controller/main.py --clear-classifier
 tc filter show dev ifb0 parent 2: | sed -n '1,120p'
 nft list table inet sqm_fw 2>/dev/null || echo "sqm_fw removed or empty"
 ```
-
-```
-root@OpenWrt:~# python3 /usr/lib/sqm-controller/main.py --clear-classifier
-{"success": false, "firewall": {"success": true, "backend": "nft", "error": "", "details": {"commands": [{"cmd": "/usr/sbin/nft delete table inet sqm_fw", "rc": 1, "stdout": "", "stderr": "Error: Could not process rule: No such file or directory\ndelete table inet sqm_fw\n                  ^^^^^^"}], "note": "table not found"}}, "tc": {"success": false, "error": "clear_classifier_tc failed"}, "errors": ["tc: clear_classifier_tc failed"]}
-root@OpenWrt:~# tc filter show dev ifb0 parent 2: | sed -n '1,120p'
-root@OpenWrt:~# nft list table inet sqm_fw 2>/dev/null || echo "sqm_fw removed or empty"
-sqm_fw removed or empty
-
-```
-
-
 
 #### 二、traffic_stats 专项验收
 

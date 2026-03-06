@@ -18,30 +18,30 @@
 </style>
 
 <div class="cbi-map sqm-wrap">
-  <h2 class="sqm-title"><%:策略引擎%></h2>
+  <h2 class="sqm-title">策略引擎</h2>
 
   <div class="sqm-topbar">
     <span id="status-badge" class="sqm-badge">--</span>
-    <button id="btn-run-once" class="cbi-button cbi-button-apply"><%:执行一次策略%></button>
-    <button id="btn-refresh" class="cbi-button"><%:刷新快照%></button>
+    <button id="btn-run-once" class="cbi-button cbi-button-apply">执行一次策略</button>
+    <button id="btn-refresh" class="cbi-button">刷新快照</button>
     <span id="hint-text" class="sqm-note"></span>
   </div>
 
   <div class="sqm-grid">
     <div class="sqm-card">
-      <div class="sqm-k">mode</div>
+      <div class="sqm-k">策略模式</div>
       <div id="val-mode" class="sqm-v">--</div>
-      <div class="sqm-k">reason</div>
+      <div class="sqm-k">判定原因</div>
       <div id="val-reason" class="sqm-v">--</div>
-      <div class="sqm-k">changed</div>
+      <div class="sqm-k">是否发生调整</div>
       <div id="val-changed" class="sqm-v">--</div>
-      <div class="sqm-k">actions</div>
+      <div class="sqm-k">动作数量</div>
       <div id="val-actions" class="sqm-v">--</div>
-      <div class="sqm-k">last_change_ts</div>
+      <div class="sqm-k">上次调整时间</div>
       <div id="val-last-change" class="sqm-v">--</div>
     </div>
     <div class="sqm-card">
-      <div class="sqm-k"><%:最近一次返回%></div>
+      <div class="sqm-k">最近一次返回</div>
       <pre id="result-pre" class="sqm-pre">--</pre>
     </div>
   </div>
@@ -51,6 +51,19 @@
 (function() {
   var POLICY_ONCE_URL = '<%=luci.dispatcher.build_url("admin/services/sqm_controller/policy_once")%>';
   var STATE_URL = '<%=luci.dispatcher.build_url("admin/services/sqm_controller/get_policy_state")%>';
+  var MODE_LABELS = {
+    gaming: "游戏优先",
+    streaming: "流媒体优先",
+    bulk: "批量传输优先",
+    other: "默认",
+    disabled: "已禁用",
+    auto: "自动"
+  };
+  var REASON_LABELS = {
+    "severe congestion": "严重拥塞",
+    "policy disabled": "策略已禁用",
+    "no state yet": "暂无状态"
+  };
   var lastSnapshot = null;
 
   function el(id) { return document.getElementById(id); }
@@ -65,6 +78,14 @@
       try { return JSON.stringify(v); } catch (e) { return "--"; }
     }
     return String(v);
+  }
+  function displayMode(v) {
+    var text = toText(v);
+    return MODE_LABELS[text] || text;
+  }
+  function displayReason(v) {
+    var text = toText(v);
+    return REASON_LABELS[text] || text;
   }
   function tsText(v) {
     var n = Number(v);
@@ -81,14 +102,16 @@
   }
   function render(data) {
     data = (data && typeof data === "object") ? data : {};
-    var mode = toText(data.mode !== undefined && data.mode !== null && data.mode !== "" ? data.mode : data.current_mode);
-    var reason = toText(data.reason);
+    var rawMode = (data.mode !== undefined && data.mode !== null && data.mode !== "") ? data.mode : data.current_mode;
+    var rawReason = (data.reason !== undefined && data.reason !== null && data.reason !== "") ? data.reason : data.note;
+    var mode = displayMode(rawMode);
+    var reason = displayReason(rawReason);
     var changed = "--";
     if (typeof data.changed === "boolean") {
-      changed = data.changed ? "true" : "false";
+      changed = data.changed ? "是" : "否";
     } else {
       var lcNum = Number(data.last_change_ts);
-      if (isFinite(lcNum) && lcNum > 0) changed = "true";
+      if (isFinite(lcNum) && lcNum > 0) changed = "是";
     }
     var count = actionsCount(data);
     var lastChange = (data.last_change_ts !== undefined) ? tsText(data.last_change_ts) : "--";
@@ -100,12 +123,12 @@
     el("val-last-change").textContent = lastChange;
 
     if (data.success === false) {
-      setBadge("bad", "failed");
+      setBadge("bad", "执行失败");
     } else if (data.last_change_ts !== undefined || data.success === true) {
-      if (data.changed === true) setBadge("ok", "changed");
-      else setBadge("warn", "no-change");
+      if (data.changed === true) setBadge("ok", "已调整");
+      else setBadge("warn", "未发生调整");
     } else {
-      setBadge("warn", "unknown");
+      setBadge("warn", "状态未知");
     }
   }
   function pretty(data) {
