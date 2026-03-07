@@ -71,35 +71,60 @@ class TCManager:
         self.run("ip link set ifb0 up")
 
     def _apply_ingress_redirect(self):
-        matchall_cmds = [
-            f"tc filter add dev {self.interface} parent ffff: protocol ip matchall action mirred egress redirect dev ifb0",
-            f"tc filter add dev {self.interface} parent ffff: protocol ipv6 matchall action mirred egress redirect dev ifb0",
-        ]
-        u32_cmds = [
-            f"tc filter add dev {self.interface} parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0",
-            f"tc filter add dev {self.interface} parent ffff: protocol ipv6 u32 match u32 0 0 action mirred egress redirect dev ifb0",
-        ]
+        proto_list = ("ip", "ipv6")
+        matcher_specs = (
+            ("matchall", "matchall"),
+            ("u32", "u32 match u32 0 0"),
+        )
+        action_specs = (
+            ("connmark", "action connmark pipe action mirred egress redirect dev ifb0"),
+            ("ctinfo", "action ctinfo cpmark 0xffffffff pipe action mirred egress redirect dev ifb0"),
+            ("mirred", "action mirred egress redirect dev ifb0"),
+        )
+        last_failure = None
 
-        for cmd in matchall_cmds:
-            result = self.run(cmd)
-            if result.returncode != 0:
-                self.logger.warning(
-                    "matchall redirect unavailable, fallback to u32: %s -> %s",
-                    cmd,
-                    (result.stderr or "").strip(),
-                )
+        for action_name, action_clause in action_specs:
+            for matcher_name, matcher_clause in matcher_specs:
                 self.run(f"tc filter del dev {self.interface} parent ffff: 2>/dev/null")
-                for fallback_cmd in u32_cmds:
-                    fb = self.run(fallback_cmd)
-                    if fb.returncode != 0:
-                        self.logger.error(
-                            "redirect fallback failed: %s -> %s",
-                            fallback_cmd,
-                            (fb.stderr or "").strip(),
+                all_ok = True
+
+                for proto in proto_list:
+                    cmd = (
+                        f"tc filter add dev {self.interface} parent ffff: protocol {proto} "
+                        f"{matcher_clause} {action_clause}"
+                    )
+                    result = self.run(cmd)
+                    if result.returncode != 0:
+                        last_failure = {
+                            "stage": "setup-ingress-redirect",
+                            "matcher": matcher_name,
+                            "mark_restore": action_name,
+                            "cmd": cmd,
+                            "returncode": result.returncode,
+                            "stdout": (result.stdout or "").strip(),
+                            "stderr": (result.stderr or "").strip(),
+                        }
+                        self.logger.warning(
+                            "ingress redirect candidate failed matcher=%s mark_restore=%s: %s -> %s",
+                            matcher_name,
+                            action_name,
+                            cmd,
+                            (result.stderr or "").strip(),
                         )
-                        return False
-                return True
-        return True
+                        all_ok = False
+                        break
+
+                if all_ok:
+                    self.logger.info(
+                        "ingress redirect active matcher=%s mark_restore=%s",
+                        matcher_name,
+                        action_name,
+                    )
+                    return True
+
+        if last_failure:
+            self._set_last_error_details(**last_failure)
+        return False
 
     def setup_htb(self):
         ecn_flag = "ecn" if self.ecn else "noecn"

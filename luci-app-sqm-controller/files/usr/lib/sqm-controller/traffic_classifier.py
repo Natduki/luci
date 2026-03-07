@@ -151,11 +151,11 @@ def _normalize_proto(proto_value, rule_name):
     raise ValueError(f"{rule_name}: unsupported proto '{proto}'")
 
 
-def _specificity_score(proto, ports, ip_value):
+def _specificity_score(proto, ports, sport, ip_value):
     score = 0
     if ip_value:
         score += 100
-    if ports:
+    if ports or sport:
         score += 10
     if proto in ("tcp", "udp"):
         score += 1
@@ -249,11 +249,7 @@ def _prepare_raw_rules(class_rule_sections, category_marks):
             errors.append(f"{rule_name}: unsupported category '{category}'")
             continue
 
-        sport = str(opts.get("sport", "")).strip()
         dst_ip = str(opts.get("dst_ip", "")).strip()
-        if sport:
-            errors.append(f"{rule_name}: sport is not supported in this release")
-            continue
         if dst_ip:
             errors.append(f"{rule_name}: dst_ip is not supported in this release")
             continue
@@ -271,8 +267,9 @@ def _prepare_raw_rules(class_rule_sections, category_marks):
             continue
 
         ports = str(opts.get("dport", "")).strip()
+        sport = str(opts.get("sport", "")).strip()
         ip_value = str(opts.get("src_ip", "")).strip()
-        specificity = _specificity_score(proto, ports, ip_value)
+        specificity = _specificity_score(proto, ports, sport, ip_value)
 
         prepared.append(
             {
@@ -280,6 +277,7 @@ def _prepare_raw_rules(class_rule_sections, category_marks):
                 "_specificity": specificity,
                 "proto": proto,
                 "ports": ports,
+                "sport": sport,
                 "ip": ip_value,
                 "priority": priority,
                 "category": category,
@@ -294,6 +292,7 @@ def _prepare_raw_rules(class_rule_sections, category_marks):
             {
                 "proto": item["proto"],
                 "ports": item["ports"],
+                "sport": item["sport"],
                 "ip": item["ip"],
                 "priority": item["priority"],
                 "category": item["category"],

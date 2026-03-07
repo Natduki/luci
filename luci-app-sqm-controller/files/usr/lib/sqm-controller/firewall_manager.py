@@ -121,7 +121,8 @@ def normalize_rules(raw_rules, category_marks):
             raise ValueError(f"rule #{idx} invalid proto: {proto}")
 
         ports = parse_ports(item.get("ports"))
-        if ports and proto == "all":
+        sports = parse_ports(item.get("sport"))
+        if (ports or sports) and proto == "all":
             raise ValueError(f"rule #{idx} has ports but proto=all")
 
         ip_match = str(item.get("ip", "")).strip()
@@ -142,6 +143,7 @@ def normalize_rules(raw_rules, category_marks):
                 "index": idx,
                 "proto": proto,
                 "ports": ports,
+                "sports": sports,
                 "ip": ip_match,
                 "priority": priority,
                 "category": category,
@@ -215,7 +217,7 @@ def detect_backend():
     }
 
 
-def build_nft_match_tokens(rule, port_token):
+def build_nft_match_tokens(rule, dport_token, sport_token):
     tokens = []
     if rule["proto"] != "all":
         tokens.extend(["meta", "l4proto", rule["proto"]])
@@ -224,8 +226,10 @@ def build_nft_match_tokens(rule, port_token):
             tokens.extend(["ip6", "saddr", rule["ip"]])
         else:
             tokens.extend(["ip", "saddr", rule["ip"]])
-    if port_token:
-        tokens.extend(["th", "dport", port_token])
+    if dport_token:
+        tokens.extend(["th", "dport", dport_token])
+    if sport_token:
+        tokens.extend(["th", "sport", sport_token])
     return tokens
 
 
@@ -303,15 +307,17 @@ def apply_nft(rules, nft_path):
         return False, "failed to add nft restore-mark rule", details
 
     for rule in rules:
-        port_tokens = rule["ports"] or [None]
-        for port_token in port_tokens:
-            cmd = [nft_path, "add", "rule", NFT_TABLE_FAMILY, NFT_TABLE_NAME, NFT_CHAIN_NAME]
-            cmd.extend(build_nft_match_tokens(rule, port_token))
-            cmd.extend(["meta", "mark", "set", rule["mark_hex"], "ct", "mark", "set", "mark"])
-            ok, _ = run_checked(cmd, details)
-            if not ok:
-                return False, f"failed to add nft rule for category={rule['category']}", details
-            details["rules_applied"] += 1
+        dport_tokens = rule["ports"] or [None]
+        sport_tokens = rule["sports"] or [None]
+        for dport_token in dport_tokens:
+            for sport_token in sport_tokens:
+                cmd = [nft_path, "add", "rule", NFT_TABLE_FAMILY, NFT_TABLE_NAME, NFT_CHAIN_NAME]
+                cmd.extend(build_nft_match_tokens(rule, dport_token, sport_token))
+                cmd.extend(["counter", "meta", "mark", "set", rule["mark_hex"], "ct", "mark", "set", "mark"])
+                ok, _ = run_checked(cmd, details)
+                if not ok:
+                    return False, f"failed to add nft rule for category={rule['category']}", details
+                details["rules_applied"] += 1
 
     details["rules"] = rules
     return True, "", details
@@ -367,48 +373,52 @@ def apply_iptables(rules, iptables_path):
         return False, "failed to add iptables restore-mark rule", details
 
     for rule in rules:
-        port_tokens = rule["ports"] or [None]
-        for port_token in port_tokens:
-            matches = []
-            if rule["proto"] != "all":
-                matches.extend(["-p", rule["proto"]])
-            if rule["ip"]:
-                matches.extend(["-s", rule["ip"]])
-            if port_token:
-                matches.extend(["--dport", port_token.replace("-", ":")])
+        dport_tokens = rule["ports"] or [None]
+        sport_tokens = rule["sports"] or [None]
+        for dport_token in dport_tokens:
+            for sport_token in sport_tokens:
+                matches = []
+                if rule["proto"] != "all":
+                    matches.extend(["-p", rule["proto"]])
+                if rule["ip"]:
+                    matches.extend(["-s", rule["ip"]])
+                if dport_token:
+                    matches.extend(["--dport", dport_token.replace("-", ":")])
+                if sport_token:
+                    matches.extend(["--sport", sport_token.replace("-", ":")])
 
-            mark_cmd = [
-                iptables_path,
-                "-t",
-                IPT_TABLE,
-                "-A",
-                IPT_CHAIN,
-                *matches,
-                "-j",
-                "MARK",
-                "--set-xmark",
-                f"{rule['mark_hex']}/0xffffffff",
-            ]
-            ok, _ = run_checked(mark_cmd, details)
-            if not ok:
-                return False, f"failed to add iptables MARK rule for category={rule['category']}", details
+                mark_cmd = [
+                    iptables_path,
+                    "-t",
+                    IPT_TABLE,
+                    "-A",
+                    IPT_CHAIN,
+                    *matches,
+                    "-j",
+                    "MARK",
+                    "--set-xmark",
+                    f"{rule['mark_hex']}/0xffffffff",
+                ]
+                ok, _ = run_checked(mark_cmd, details)
+                if not ok:
+                    return False, f"failed to add iptables MARK rule for category={rule['category']}", details
 
-            save_cmd = [
-                iptables_path,
-                "-t",
-                IPT_TABLE,
-                "-A",
-                IPT_CHAIN,
-                *matches,
-                "-j",
-                "CONNMARK",
-                "--save-mark",
-            ]
-            ok, _ = run_checked(save_cmd, details)
-            if not ok:
-                return False, f"failed to add iptables CONNMARK rule for category={rule['category']}", details
+                save_cmd = [
+                    iptables_path,
+                    "-t",
+                    IPT_TABLE,
+                    "-A",
+                    IPT_CHAIN,
+                    *matches,
+                    "-j",
+                    "CONNMARK",
+                    "--save-mark",
+                ]
+                ok, _ = run_checked(save_cmd, details)
+                if not ok:
+                    return False, f"failed to add iptables CONNMARK rule for category={rule['category']}", details
 
-            details["rules_applied"] += 1
+                details["rules_applied"] += 1
 
     details["rules"] = rules
     return True, "", details
